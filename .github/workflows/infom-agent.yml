@@ -1,0 +1,157 @@
+name: InfoM GraphRAG Agent
+
+# Триггеры запуска:
+# 1. При пуше новых документов в рабочем репозитории
+# 2. Ручной запуск с произвольным вопросом
+# 3. По расписанию (каждую ночь в 3:00 UTC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      question:
+        description: 'Вопрос к графу знаний (опционально)'
+        required: false
+        default: ''
+      data_repo:
+        description: 'Рабочий репозиторий (org/repo)'
+        required: true
+        default: 'your-org/your-project'
+      docs_path:
+        description: 'Путь к документам внутри рабочего репо'
+        required: false
+        default: 'docs'
+      reset_graph:
+        description: 'Сбросить граф перед индексацией (true/false)'
+        required: false
+        default: 'false'
+  schedule:
+    - cron: '0 3 * * *'    # каждую ночь в 3:00 UTC
+  push:
+    paths:
+      - 'tasks/current_task.md'   # запуск при обновлении задачи
+
+env:
+  INFOM_PROVIDER: ${{ secrets.INFOM_PROVIDER || 'semantic' }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
+  OLLAMA_URL:     ${{ secrets.OLLAMA_URL     || 'http://localhost:11434' }}
+
+jobs:
+  analyze:
+    name: Graph Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Клонируем репо с мозгом (этот репо) ──────────────────────────────
+      - name: Checkout brain repo
+        uses: actions/checkout@v4
+        with:
+          path: brain
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Клонируем рабочий репо с данными ─────────────────────────────────
+      - name: Checkout data repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.data_repo || 'your-org/your-project' }}
+          path: project
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
+      # ── 3. Python окружение ──────────────────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r brain/requirements.txt
+          # Опционально: pip install openai ollama
+
+      # ── 4. Запуск агента ─────────────────────────────────────────────────────
+      - name: Run InfoM Analysis Agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          working_directory: brain
+          allowed_tools: >
+            Read,Glob,Bash,
+            mcp__infom__infom_index,
+            mcp__infom__infom_query,
+            mcp__infom__infom_stats,
+            mcp__infom__infom_visualize,
+            mcp__infom__infom_reset,
+            mcp__infom__infom_save,
+            mcp__infom__infom_load
+          prompt: |
+            Ты — аналитический агент InfoM GraphRAG.
+
+            РЕПОЗИТОРИИ:
+            - brain/  = инструкции и граф (текущий каталог)
+            - project/ = данные для анализа (../project/)
+
+            ЗАДАЧА:
+            1. Прочитай brain/tasks/current_task.md
+            2. Если reset_graph=true → infom_reset()
+               Иначе → infom_load() для восстановления предыдущего графа
+            3. Найди все .md и .txt файлы в ../project/${{ github.event.inputs.docs_path || 'docs' }}/
+            4. Проиндексируй каждый файл через infom_index()
+            5. Выполни все вопросы из задачи через infom_query()
+            6. Если указан вопрос "${{ github.event.inputs.question }}" — тоже задай его
+            7. infom_visualize(what="both") — получи карту графа
+            8. Сохрани отчёт в ../project/results/analysis_$(date +%Y-%m-%d).md
+               Используй шаблон из brain/skills/reporting.md
+            9. infom_save() — сохрани снапшот графа
+            10. Выведи краткое резюме в stdout
+
+          reset_graph: ${{ github.event.inputs.reset_graph || 'false' }}
+
+      # ── 5. Коммитим результаты обратно в рабочий репо ───────────────────────
+      - name: Commit analysis results
+        working-directory: project
+        run: |
+          git config user.name  "InfoM Agent"
+          git config user.email "infom-agent@github-actions.bot"
+          git add results/
+          if git diff --cached --quiet; then
+            echo "Нет новых результатов для коммита"
+          else
+            git commit -m "auto(infom): graph analysis $(date +%Y-%m-%d)
+
+            Nodes: $(python -c "import json; d=json.load(open('../brain/graph_snapshots/latest.json')); print(len(d['nodes']))" 2>/dev/null || echo '?')
+            Triggered by: ${{ github.actor }}
+            Workflow: ${{ github.run_id }}"
+            git push
+          fi
+
+      # ── 6. Коммитим снапшот графа в brain репо ──────────────────────────────
+      - name: Commit graph snapshot
+        working-directory: brain
+        run: |
+          git config user.name  "InfoM Agent"
+          git config user.email "infom-agent@github-actions.bot"
+          git add graph_snapshots/
+          if git diff --cached --quiet; then
+            echo "Снапшот не изменился"
+          else
+            git commit -m "auto(infom): update graph snapshot $(date +%Y-%m-%d)"
+            git push
+          fi
+
+      # ── 7. Summary в GitHub Actions UI ──────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## InfoM Analysis Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Date: $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "- Data repo: ${{ github.event.inputs.data_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- LLM provider: ${{ env.INFOM_PROVIDER }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f brain/graph_snapshots/latest.json ]; then
+            NODES=$(python3 -c "import json; d=json.load(open('brain/graph_snapshots/latest.json')); print(len(d['nodes']))")
+            EDGES=$(python3 -c "import json; d=json.load(open('brain/graph_snapshots/latest.json')); print(len(d['edges']))")
+            echo "- Graph: ${NODES} nodes, ${EDGES} edges" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Results saved to: project/results/" >> $GITHUB_STEP_SUMMARY
