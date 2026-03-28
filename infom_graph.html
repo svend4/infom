@@ -1,0 +1,1599 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>InfoM — Knowledge Map</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d1117; color: #c9d1d9;
+  font-family: 'Segoe UI', monospace; font-size: 13px;
+}
+#app { display: flex; height: 100vh; }
+#sidebar {
+  width: 300px; min-width: 260px;
+  background: #161b22; border-right: 1px solid #30363d;
+  overflow-y: auto; padding: 12px;
+}
+#main { flex: 1; position: relative; }
+svg { width: 100%; height: 100%; }
+
+/* sidebar */
+h2 { color: #58a6ff; font-size: 14px; margin: 10px 0 6px; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
+h3 { color: #8b949e; font-size: 12px; margin: 8px 0 4px; }
+.comm-card {
+  background: #21262d; border-radius: 6px; padding: 8px;
+  margin-bottom: 6px; border-left: 3px solid;
+  cursor: pointer; transition: background 0.2s;
+}
+.comm-card:hover { background: #2d333b; }
+.comm-card.active { background: #2d333b; }
+.tag {
+  display: inline-block; padding: 1px 6px; border-radius: 10px;
+  font-size: 11px; margin: 2px 2px 2px 0;
+  background: #21262d; border: 1px solid #30363d;
+}
+.shape-tag { color: #ffa657; border-color: #ffa657; }
+.skel-tag  { color: #79c0ff; border-color: #79c0ff; }
+.q6-tag    { color: #3fb950; border-color: #3fb950; }
+
+/* spider / rose charts */
+.chart-wrap { background: #21262d; border-radius: 8px; padding: 8px; margin: 6px 0; }
+.chart-title { color: #8b949e; font-size: 11px; margin-bottom: 4px; }
+
+/* graph elements */
+.node circle {
+  stroke-width: 2;
+  transition: r 0.2s;
+}
+.node text {
+  pointer-events: none;
+  font-size: 11px;
+  fill: #c9d1d9;
+  text-shadow: 0 0 3px #0d1117;
+}
+.link {
+  stroke: #444c56;
+  stroke-opacity: 0.6;
+}
+.link.directed marker { fill: #444c56; }
+.hull {
+  opacity: 0.12;
+  stroke-width: 2;
+  stroke-opacity: 0.5;
+}
+.hyper-poly {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 2;
+  opacity: 0.7;
+}
+.fractal-border {
+  fill: none;
+  stroke-width: 1;
+  stroke-opacity: 0.4;
+  stroke-dasharray: 2 4;
+}
+.tooltip {
+  position: absolute; background: #161b22;
+  border: 1px solid #30363d; border-radius: 6px;
+  padding: 8px 12px; pointer-events: none;
+  font-size: 12px; max-width: 200px;
+  opacity: 0; transition: opacity 0.15s;
+}
+
+/* legend */
+#legend {
+  position: absolute; bottom: 16px; left: 16px;
+  background: #161b22cc; border: 1px solid #30363d;
+  border-radius: 8px; padding: 10px; font-size: 12px;
+}
+#legend div { margin: 3px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+<div id="sidebar">
+  <h2>InfoM Knowledge Map</h2>
+  <div id="stats"></div>
+  <h2>Сообщества</h2>
+  <div id="comm-list"></div>
+  <h2>Подписи</h2>
+  <div id="sig-panel">
+    <div class="chart-wrap">
+      <div class="chart-title">Heptagram (7 измерений)</div>
+      <svg id="spider" width="276" height="200"></svg>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Octagram (роза ветров)</div>
+      <svg id="rose" width="276" height="200"></svg>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Q6 соты</div>
+      <svg id="q6map" width="276" height="130"></svg>
+    </div>
+  </div>
+</div>
+<div id="main">
+  <div class="tooltip" id="tooltip"></div>
+  <div id="legend">
+    <div>△ Треугольник  (3) triada</div>
+    <div>□ Прямоуг.    (4) pattern</div>
+    <div>⬠ Пятиугольн. (5) cluster</div>
+    <div>⬡ Шестиугольн.(6) Q6-cell</div>
+    <div>☆ 7-лучевая   (7) 3D heptagram</div>
+    <div>✳ 8-лучевая   (8) 3D octagram</div>
+    <div>∿ Фрактал     (N) border</div>
+  </div>
+  <svg id="graph"></svg>
+</div>
+</div>
+
+<script>
+const DATA = {
+  "nodes": [
+    {
+      "id": "n1",
+      "label": "Алгоритм",
+      "archetype": "ADEO",
+      "hex_id": 39,
+      "bits": [
+        1,
+        1,
+        1,
+        0,
+        0,
+        1
+      ],
+      "community": "comm_3",
+      "weight": 1.0
+    },
+    {
+      "id": "n2",
+      "label": "Нейросеть",
+      "archetype": "ADCO",
+      "hex_id": 47,
+      "bits": [
+        1,
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "community": "comm_3",
+      "weight": 1.0
+    },
+    {
+      "id": "n3",
+      "label": "Компилятор",
+      "archetype": "ADCO",
+      "hex_id": 46,
+      "bits": [
+        0,
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "community": "comm_6",
+      "weight": 1.0
+    },
+    {
+      "id": "n4",
+      "label": "Метро",
+      "archetype": "MDCO",
+      "hex_id": 23,
+      "bits": [
+        1,
+        1,
+        1,
+        0,
+        1,
+        0
+      ],
+      "community": "comm_3",
+      "weight": 1.0
+    },
+    {
+      "id": "n5",
+      "label": "Транспорт",
+      "archetype": "MDEO",
+      "hex_id": 19,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "community": "comm_3",
+      "weight": 1.0
+    },
+    {
+      "id": "n6",
+      "label": "Инфраструктура",
+      "archetype": "MSCO",
+      "hex_id": 29,
+      "bits": [
+        1,
+        0,
+        1,
+        1,
+        1,
+        0
+      ],
+      "community": "comm_5",
+      "weight": 1.0
+    },
+    {
+      "id": "n7",
+      "label": "Физика",
+      "archetype": "ASCO",
+      "hex_id": 44,
+      "bits": [
+        0,
+        0,
+        1,
+        1,
+        0,
+        1
+      ],
+      "community": "comm_0",
+      "weight": 1.0
+    },
+    {
+      "id": "n8",
+      "label": "Математика",
+      "archetype": "ASEO",
+      "hex_id": 40,
+      "bits": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        1
+      ],
+      "community": "comm_0",
+      "weight": 1.0
+    },
+    {
+      "id": "n9",
+      "label": "Термодинамика",
+      "archetype": "ASCO",
+      "hex_id": 12,
+      "bits": [
+        0,
+        0,
+        1,
+        1,
+        0,
+        0
+      ],
+      "community": "comm_0",
+      "weight": 1.0
+    },
+    {
+      "id": "n10",
+      "label": "Клетка",
+      "archetype": "MDEF",
+      "hex_id": 3,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "community": "comm_3",
+      "weight": 1.0
+    },
+    {
+      "id": "n11",
+      "label": "ДНК",
+      "archetype": "MSEO",
+      "hex_id": 9,
+      "bits": [
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "community": "comm_0",
+      "weight": 1.0
+    },
+    {
+      "id": "n12",
+      "label": "Экосистема",
+      "archetype": "MSCF",
+      "hex_id": 5,
+      "bits": [
+        1,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "community": "comm_5",
+      "weight": 1.0
+    }
+  ],
+  "edges": [
+    {
+      "source": "n1",
+      "target": "n2",
+      "label": "основа",
+      "weight": 0.9,
+      "directed": true
+    },
+    {
+      "source": "n2",
+      "target": "n3",
+      "label": "компилируется",
+      "weight": 0.7,
+      "directed": true
+    },
+    {
+      "source": "n1",
+      "target": "n3",
+      "label": "реализуется",
+      "weight": 0.8,
+      "directed": true
+    },
+    {
+      "source": "n4",
+      "target": "n5",
+      "label": "использует",
+      "weight": 0.9,
+      "directed": true
+    },
+    {
+      "source": "n5",
+      "target": "n6",
+      "label": "часть",
+      "weight": 0.8,
+      "directed": true
+    },
+    {
+      "source": "n4",
+      "target": "n6",
+      "label": "включает",
+      "weight": 0.7,
+      "directed": true
+    },
+    {
+      "source": "n7",
+      "target": "n8",
+      "label": "формализует",
+      "weight": 0.9,
+      "directed": true
+    },
+    {
+      "source": "n8",
+      "target": "n9",
+      "label": "применяется",
+      "weight": 0.8,
+      "directed": true
+    },
+    {
+      "source": "n7",
+      "target": "n9",
+      "label": "объясняет",
+      "weight": 0.9,
+      "directed": true
+    },
+    {
+      "source": "n10",
+      "target": "n11",
+      "label": "содержит",
+      "weight": 0.9,
+      "directed": true
+    },
+    {
+      "source": "n11",
+      "target": "n12",
+      "label": "формирует",
+      "weight": 0.7,
+      "directed": true
+    },
+    {
+      "source": "n10",
+      "target": "n12",
+      "label": "часть",
+      "weight": 0.8,
+      "directed": true
+    },
+    {
+      "source": "n1",
+      "target": "n7",
+      "label": "изучает",
+      "weight": 0.5,
+      "directed": true
+    },
+    {
+      "source": "n2",
+      "target": "n10",
+      "label": "моделирует",
+      "weight": 0.4,
+      "directed": true
+    },
+    {
+      "source": "n6",
+      "target": "n4",
+      "label": "обслуживает",
+      "weight": 0.6,
+      "directed": true
+    }
+  ],
+  "communities": [
+    {
+      "id": "comm_3",
+      "label": "community_3",
+      "hex_id": 7,
+      "bits": [
+        1,
+        1,
+        1,
+        0,
+        0,
+        0
+      ],
+      "shape": "pentagon",
+      "skeleton": "tower",
+      "color_idx": 0,
+      "node_ids": [
+        "n1",
+        "n2",
+        "n4",
+        "n5",
+        "n10"
+      ],
+      "heptagram": [
+        {
+          "label": "strength",
+          "length": 0.7333333333333334,
+          "angle": 0.0,
+          "z": 0.0
+        },
+        {
+          "label": "direction",
+          "length": 1.0,
+          "angle": 0.8975979010256552,
+          "z": 0.3909157412340149
+        },
+        {
+          "label": "temporal",
+          "length": 0.5,
+          "angle": 1.7951958020513104,
+          "z": 0.2437319780454559
+        },
+        {
+          "label": "confidence",
+          "length": 0.7333333333333334,
+          "angle": 2.6927937030769655,
+          "z": 0.1590907043431047
+        },
+        {
+          "label": "scale",
+          "length": 0.15,
+          "angle": 3.5903916041026207,
+          "z": -0.03254128043381685
+        },
+        {
+          "label": "context",
+          "length": 0.9,
+          "angle": 4.487989505128276,
+          "z": -0.43871756048182065
+        },
+        {
+          "label": "source",
+          "length": 0.7,
+          "angle": 5.385587406153931,
+          "z": -0.2736410188638104
+        }
+      ],
+      "octagram": [
+        {
+          "dir": "N",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "NE",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "E",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SE",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "S",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "SW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "W",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "NW",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        }
+      ],
+      "fd_box": 1.0
+    },
+    {
+      "id": "comm_6",
+      "label": "community_6",
+      "hex_id": 46,
+      "bits": [
+        0,
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "shape": "polygon",
+      "skeleton": "fractal",
+      "color_idx": 1,
+      "node_ids": [
+        "n3"
+      ],
+      "heptagram": [
+        {
+          "label": "strength",
+          "length": 0.5,
+          "angle": 0.0,
+          "z": 0.0
+        },
+        {
+          "label": "direction",
+          "length": 0.5,
+          "angle": 0.8975979010256552,
+          "z": 0.19545787061700745
+        },
+        {
+          "label": "temporal",
+          "length": 0.5,
+          "angle": 1.7951958020513104,
+          "z": 0.2437319780454559
+        },
+        {
+          "label": "confidence",
+          "length": 0.5,
+          "angle": 2.6927937030769655,
+          "z": 0.10847093477938956
+        },
+        {
+          "label": "scale",
+          "length": 0.5,
+          "angle": 3.5903916041026207,
+          "z": -0.1084709347793895
+        },
+        {
+          "label": "context",
+          "length": 0.5,
+          "angle": 4.487989505128276,
+          "z": -0.2437319780454559
+        },
+        {
+          "label": "source",
+          "length": 0.5,
+          "angle": 5.385587406153931,
+          "z": -0.19545787061700748
+        }
+      ],
+      "octagram": [
+        {
+          "dir": "N",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "NE",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "E",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SE",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "S",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "W",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "NW",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        }
+      ],
+      "fd_box": 1.0
+    },
+    {
+      "id": "comm_5",
+      "label": "community_5",
+      "hex_id": 5,
+      "bits": [
+        1,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "shape": "rectangle",
+      "skeleton": "tower",
+      "color_idx": 2,
+      "node_ids": [
+        "n6",
+        "n12"
+      ],
+      "heptagram": [
+        {
+          "label": "strength",
+          "length": 0.5,
+          "angle": 0.0,
+          "z": 0.0
+        },
+        {
+          "label": "direction",
+          "length": 0.5,
+          "angle": 0.8975979010256552,
+          "z": 0.19545787061700745
+        },
+        {
+          "label": "temporal",
+          "length": 0.5,
+          "angle": 1.7951958020513104,
+          "z": 0.2437319780454559
+        },
+        {
+          "label": "confidence",
+          "length": 0.5,
+          "angle": 2.6927937030769655,
+          "z": 0.10847093477938956
+        },
+        {
+          "label": "scale",
+          "length": 0.5,
+          "angle": 3.5903916041026207,
+          "z": -0.1084709347793895
+        },
+        {
+          "label": "context",
+          "length": 0.5,
+          "angle": 4.487989505128276,
+          "z": -0.2437319780454559
+        },
+        {
+          "label": "source",
+          "length": 0.5,
+          "angle": 5.385587406153931,
+          "z": -0.19545787061700748
+        }
+      ],
+      "octagram": [
+        {
+          "dir": "N",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "NE",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "E",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SE",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "S",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "SW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "W",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "NW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        }
+      ],
+      "fd_box": 1.0
+    },
+    {
+      "id": "comm_0",
+      "label": "community_0",
+      "hex_id": 44,
+      "bits": [
+        0,
+        0,
+        1,
+        1,
+        0,
+        1
+      ],
+      "shape": "polygon",
+      "skeleton": "fractal",
+      "color_idx": 3,
+      "node_ids": [
+        "n7",
+        "n8",
+        "n9",
+        "n11"
+      ],
+      "heptagram": [
+        {
+          "label": "strength",
+          "length": 0.8666666666666667,
+          "angle": 0.0,
+          "z": 0.0
+        },
+        {
+          "label": "direction",
+          "length": 1.0,
+          "angle": 0.8975979010256552,
+          "z": 0.3909157412340149
+        },
+        {
+          "label": "temporal",
+          "length": 0.5,
+          "angle": 1.7951958020513104,
+          "z": 0.2437319780454559
+        },
+        {
+          "label": "confidence",
+          "length": 0.8666666666666667,
+          "angle": 2.6927937030769655,
+          "z": 0.1880162869509419
+        },
+        {
+          "label": "scale",
+          "length": 0.15,
+          "angle": 3.5903916041026207,
+          "z": -0.03254128043381685
+        },
+        {
+          "label": "context",
+          "length": 0.9,
+          "angle": 4.487989505128276,
+          "z": -0.43871756048182065
+        },
+        {
+          "label": "source",
+          "length": 0.7,
+          "angle": 5.385587406153931,
+          "z": -0.2736410188638104
+        }
+      ],
+      "octagram": [
+        {
+          "dir": "N",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "NE",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "E",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SE",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "S",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "SW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        },
+        {
+          "dir": "W",
+          "length": 1.0,
+          "elevation": 0.39269908169872414
+        },
+        {
+          "dir": "NW",
+          "length": 0.0,
+          "elevation": -0.39269908169872414
+        }
+      ],
+      "fd_box": 1.0
+    }
+  ],
+  "hyper_edges": [
+    {
+      "id": "he_n1",
+      "label": "quad",
+      "shape": "polygon",
+      "nodes": [
+        "n1",
+        "n7",
+        "n2",
+        "n3"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n2",
+      "label": "quad",
+      "shape": "polygon",
+      "nodes": [
+        "n1",
+        "n10",
+        "n2",
+        "n3"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n3",
+      "label": "triad",
+      "shape": "triangle",
+      "nodes": [
+        "n1",
+        "n2",
+        "n3"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n4",
+      "label": "triad",
+      "shape": "triangle",
+      "nodes": [
+        "n5",
+        "n4",
+        "n6"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n7",
+      "label": "quad",
+      "shape": "rectangle",
+      "nodes": [
+        "n8",
+        "n7",
+        "n1",
+        "n9"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n8",
+      "label": "triad",
+      "shape": "triangle",
+      "nodes": [
+        "n8",
+        "n7",
+        "n9"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n10",
+      "label": "quad",
+      "shape": "rectangle",
+      "nodes": [
+        "n10",
+        "n2",
+        "n11",
+        "n12"
+      ],
+      "weight": 1.0
+    },
+    {
+      "id": "he_n11",
+      "label": "triad",
+      "shape": "triangle",
+      "nodes": [
+        "n10",
+        "n11",
+        "n12"
+      ],
+      "weight": 1.0
+    }
+  ],
+  "borders": [
+    {
+      "a": "comm_0",
+      "b": "comm_6",
+      "fd_box": 1.0,
+      "fd_divider": 1.0,
+      "ifs": [
+        -0.3227654487238237,
+        -0.42321025957075026,
+        -0.8248723855705022,
+        0.95
+      ],
+      "curve": [
+        [
+          -0.3254722361457863,
+          -0.6114658098237252
+        ],
+        [
+          -0.2870907599748953,
+          -0.5890564133590177
+        ],
+        [
+          -0.2520186730313782,
+          -0.5661378800900989
+        ],
+        [
+          -0.22553942004583846,
+          -0.5418973723661067
+        ],
+        [
+          -0.2102980264437766,
+          -0.5159279631985024
+        ],
+        [
+          -0.205215250773366,
+          -0.4883956897337211
+        ],
+        [
+          -0.20553627184797868,
+          -0.4600320629235516
+        ],
+        [
+          -0.20407629903824376,
+          -0.4319424351725124
+        ],
+        [
+          -0.19336961223377927,
+          -0.4052753788052778
+        ],
+        [
+          -0.16814342231079665,
+          -0.3808420921485845
+        ],
+        [
+          -0.12740806403555172,
+          -0.3587948313922392
+        ],
+        [
+          -0.07552272449254971,
+          -0.33846295236939505
+        ]
+      ]
+    },
+    {
+      "a": "comm_5",
+      "b": "comm_0",
+      "fd_box": 1.0,
+      "fd_divider": 1.0,
+      "ifs": [
+        -0.14443992171393172,
+        0.08140054464656235,
+        -0.14474264879166143,
+        -0.1286106755933134
+      ],
+      "curve": [
+        [
+          0.897339541168313,
+          -0.28847134506268984
+        ],
+        [
+          0.8558112234199481,
+          -0.23475643623821457
+        ],
+        [
+          0.8061639176490326,
+          -0.1458592459826871
+        ],
+        [
+          0.7622987026206434,
+          -0.08201778227810694
+        ],
+        [
+          0.7321834529321172,
+          -0.07775950171293339
+        ],
+        [
+          0.7065520161624169,
+          -0.09293107712933865
+        ],
+        [
+          0.6675832536007817,
+          -0.050307574114025755
+        ],
+        [
+          0.6105563886080919,
+          0.07056770610252383
+        ],
+        [
+          0.5556474642936601,
+          0.18226524337995553
+        ],
+        [
+          0.5347041550860474,
+          0.14677844852783745
+        ],
+        [
+          0.5626424883851296,
+          -0.10052879718662538
+        ],
+        [
+          0.6201482237921129,
+          -0.47596145203532625
+        ]
+      ]
+    },
+    {
+      "a": "comm_3",
+      "b": "comm_6",
+      "fd_box": 1.0,
+      "fd_divider": 1.0,
+      "ifs": [
+        -0.3203940900291712,
+        0.95,
+        0.8829157833292025,
+        0.22596006140394667
+      ],
+      "curve": [
+        [
+          0.7682612226031651,
+          0.951733364148303
+        ],
+        [
+          0.7430148454813881,
+          1.0222468855061224
+        ],
+        [
+          0.7157463344827799,
+          1.12578859351885
+        ],
+        [
+          0.6923716153962041,
+          1.165731700301718
+        ],
+        [
+          0.678145689050267,
+          1.0562445256541502
+        ],
+        [
+          0.6724711316825371,
+          0.8070849910291984
+        ],
+        [
+          0.668429486384444,
+          0.5312545592668497
+        ],
+        [
+          0.6578502283825343,
+          0.3622051350001682
+        ],
+        [
+          0.6374974220717086,
+          0.35279033311244967
+        ],
+        [
+          0.6108864544765127,
+          0.44559216553610864
+        ],
+        [
+          0.5843992417596842,
+          0.5363726682797697
+        ],
+        [
+          0.5616428412949676,
+          0.5662165709056002
+        ]
+      ]
+    },
+    {
+      "a": "comm_5",
+      "b": "comm_3",
+      "fd_box": 1.0,
+      "fd_divider": 1.0,
+      "ifs": [
+        -0.020323114550979522,
+        -0.37281378527585557,
+        0.7346582920752367,
+        0.812160953760957
+      ],
+      "curve": [
+        [
+          1.0396811920917748,
+          -0.284187034857535
+        ],
+        [
+          1.033384153075798,
+          -0.26205767516363915
+        ],
+        [
+          1.0318990077941894,
+          -0.2393835727828337
+        ],
+        [
+          1.0406004182571522,
+          -0.21555627541207678
+        ],
+        [
+          1.062087060370909,
+          -0.19028159332613562
+        ],
+        [
+          1.0948696141373537,
+          -0.16372812878894677
+        ],
+        [
+          1.1330970436568155,
+          -0.13655826322311448
+        ],
+        [
+          1.1674823197850315,
+          -0.10982335841855531
+        ],
+        [
+          1.1872650182144822,
+          -0.0847415756176299
+        ],
+        [
+          1.1827562278924129,
+          -0.06240977267536721
+        ],
+        [
+          1.1478322672247083,
+          -0.043521196564685796
+        ],
+        [
+          1.081729721341069,
+          -0.028162271610525338
+        ]
+      ]
+    }
+  ]
+};
+
+// ── цвета ──────────────────────────────────────────────────────────────────
+const PALETTE = [
+  "#58a6ff","#3fb950","#ffa657","#f78166",
+  "#d2a8ff","#79c0ff","#56d364","#ff7b72",
+];
+
+const SHAPE_SYMBOL = {
+  triangle:"△", rectangle:"□", trapezoid:"⊡",
+  pentagon:"⬠", hexagon:"⬡", heptagon:"☆",
+  octagon:"✳", polygon:"◇", unknown:"·"
+};
+
+const commColor = id => {
+  const idx = DATA.communities.findIndex(c => c.id === id);
+  return PALETTE[idx % PALETTE.length];
+};
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+document.getElementById("stats").innerHTML = `
+  <div class="tag">${DATA.nodes.length} нод</div>
+  <div class="tag">${DATA.edges.length} рёбер</div>
+  <div class="tag">${DATA.hyper_edges.length} гиперрёбер</div>
+  <div class="tag">${DATA.communities.length} сообществ</div>
+  <div class="tag">${DATA.borders.length} границ</div>
+`;
+
+let activeComm = null;
+
+function renderCommList() {
+  const el = document.getElementById("comm-list");
+  el.innerHTML = DATA.communities.map(c => {
+    const sym = SHAPE_SYMBOL[c.shape] || "·";
+    const col = PALETTE[c.color_idx % PALETTE.length];
+    return `<div class="comm-card ${activeComm===c.id?'active':''}"
+      style="border-color:${col}"
+      onclick="selectComm('${c.id}')">
+      <span style="color:${col};font-size:16px">${sym}</span>
+      <strong style="color:${col}"> ${c.label}</strong><br>
+      <span class="tag shape-tag">${c.shape}</span>
+      <span class="tag skel-tag">${c.skeleton}</span>
+      <span class="tag q6-tag">Q6=${c.hex_id}</span>
+      <div style="color:#8b949e;font-size:11px;margin-top:4px">
+        ${c.node_ids.length} нод  fd=${c.fd_box.toFixed(3)}
+      </div>
+    </div>`;
+  }).join("");
+}
+renderCommList();
+
+function selectComm(id) {
+  activeComm = id;
+  renderCommList();
+  const c = DATA.communities.find(x => x.id === id);
+  if (c) {
+    drawSpider(c.heptagram);
+    drawRose(c.octagram);
+    drawQ6Map(c.hex_id);
+  }
+}
+if (DATA.communities.length) selectComm(DATA.communities[0].id);
+
+// ── spider chart ──────────────────────────────────────────────────────────
+function drawSpider(rays) {
+  const svg = d3.select("#spider");
+  svg.selectAll("*").remove();
+  if (!rays || !rays.length) return;
+  const w = 276, h = 200, cx = w/2, cy = h/2, r = 80;
+  const n = rays.length;
+  const angle = i => (i / n) * 2 * Math.PI - Math.PI/2;
+
+  // сетка
+  [0.25,0.5,0.75,1.0].forEach(t => {
+    const pts = rays.map((_, i) => {
+      const a = angle(i);
+      return [cx + Math.cos(a)*r*t, cy + Math.sin(a)*r*t];
+    });
+    svg.append("polygon")
+      .attr("points", pts.map(p=>p.join(",")).join(" "))
+      .attr("fill","none").attr("stroke","#30363d").attr("stroke-width",1);
+  });
+
+  // оси
+  rays.forEach((_, i) => {
+    const a = angle(i);
+    svg.append("line")
+      .attr("x1",cx).attr("y1",cy)
+      .attr("x2",cx+Math.cos(a)*r).attr("y2",cy+Math.sin(a)*r)
+      .attr("stroke","#30363d").attr("stroke-width",1);
+  });
+
+  // данные
+  const pts = rays.map((ray, i) => {
+    const a = angle(i);
+    return [cx + Math.cos(a)*r*ray.length, cy + Math.sin(a)*r*ray.length];
+  });
+  svg.append("polygon")
+    .attr("points", pts.map(p=>p.join(",")).join(" "))
+    .attr("fill","#58a6ff").attr("fill-opacity",0.25)
+    .attr("stroke","#58a6ff").attr("stroke-width",2);
+
+  pts.forEach((p,i) => {
+    svg.append("circle").attr("cx",p[0]).attr("cy",p[1]).attr("r",3)
+      .attr("fill","#58a6ff");
+  });
+
+  // метки
+  rays.forEach((ray, i) => {
+    const a = angle(i);
+    const lx = cx + Math.cos(a)*(r+14);
+    const ly = cy + Math.sin(a)*(r+14);
+    svg.append("text")
+      .attr("x",lx).attr("y",ly)
+      .attr("text-anchor","middle").attr("dominant-baseline","middle")
+      .attr("fill","#8b949e").attr("font-size",10)
+      .text(ray.label.slice(0,6));
+  });
+}
+
+// ── rose chart ────────────────────────────────────────────────────────────
+function drawRose(rays) {
+  const svg = d3.select("#rose");
+  svg.selectAll("*").remove();
+  if (!rays || !rays.length) return;
+  const w = 276, h = 200, cx = w/2, cy = h/2, r = 80;
+  const dirs = ["N","NE","E","SE","S","SW","W","NW"];
+  const n = 8;
+  const angle = i => (i / n) * 2 * Math.PI - Math.PI/2;
+
+  [0.25,0.5,0.75,1.0].forEach(t => {
+    const pts = dirs.map((_,i)=>{
+      const a=angle(i);
+      return [cx+Math.cos(a)*r*t, cy+Math.sin(a)*r*t];
+    });
+    svg.append("polygon")
+      .attr("points",pts.map(p=>p.join(",")).join(" "))
+      .attr("fill","none").attr("stroke","#30363d").attr("stroke-width",1);
+  });
+  dirs.forEach((_,i)=>{
+    const a=angle(i);
+    svg.append("line")
+      .attr("x1",cx).attr("y1",cy)
+      .attr("x2",cx+Math.cos(a)*r).attr("y2",cy+Math.sin(a)*r)
+      .attr("stroke","#30363d").attr("stroke-width",1);
+  });
+
+  const rayMap = {};
+  rays.forEach(r2 => { rayMap[r2.dir] = r2; });
+
+  const pts = dirs.map((d,i)=>{
+    const ray = rayMap[d] || {length:0};
+    const a   = angle(i);
+    // 3D elevation меняет радиус
+    const el  = ray.elevation || 0;
+    const rr  = r * ray.length * Math.cos(el);
+    return [cx+Math.cos(a)*rr, cy+Math.sin(a)*rr];
+  });
+  svg.append("polygon")
+    .attr("points",pts.map(p=>p.join(",")).join(" "))
+    .attr("fill","#ffa657").attr("fill-opacity",0.2)
+    .attr("stroke","#ffa657").attr("stroke-width",2);
+
+  dirs.forEach((d,i)=>{
+    const a = angle(i);
+    const lx = cx+Math.cos(a)*(r+14);
+    const ly = cy+Math.sin(a)*(r+14);
+    svg.append("text")
+      .attr("x",lx).attr("y",ly)
+      .attr("text-anchor","middle").attr("dominant-baseline","middle")
+      .attr("fill","#8b949e").attr("font-size",10).text(d);
+  });
+}
+
+// ── Q6 honeycomb ──────────────────────────────────────────────────────────
+function drawQ6Map(activeHexId) {
+  const svg = d3.select("#q6map");
+  svg.selectAll("*").remove();
+  const W = 276, H = 130;
+  // 8×8 сетка
+  const cellW = W/8, cellH = H/8;
+  const occupied = new Set(DATA.communities.map(c=>c.hex_id));
+  DATA.nodes.forEach(n => occupied.add(n.hex_id));
+
+  for (let row=0; row<8; row++) {
+    for (let col=0; col<8; col++) {
+      const hid = row*8+col;
+      const x   = col*cellW + cellW/2;
+      const y   = row*cellH + cellH/2;
+      const comm = DATA.communities.find(c=>c.hex_id===hid);
+      const isActive = hid === activeHexId;
+      const fill = comm ? PALETTE[comm.color_idx%PALETTE.length]
+                        : (occupied.has(hid) ? "#444c56" : "#21262d");
+      const opacity = comm ? 0.8 : (occupied.has(hid) ? 0.5 : 0.3);
+      svg.append("rect")
+        .attr("x",col*cellW+1).attr("y",row*cellH+1)
+        .attr("width",cellW-2).attr("height",cellH-2)
+        .attr("rx",2)
+        .attr("fill",fill).attr("fill-opacity",opacity)
+        .attr("stroke", isActive?"#fff":"none")
+        .attr("stroke-width", isActive?2:0);
+      if (comm || isActive) {
+        svg.append("text")
+          .attr("x",x).attr("y",y+1)
+          .attr("text-anchor","middle").attr("dominant-baseline","middle")
+          .attr("fill","#fff").attr("font-size",8)
+          .text(hid);
+      }
+    }
+  }
+}
+
+// ── force graph ────────────────────────────────────────────────────────────
+const svg   = d3.select("#graph");
+const w     = () => svg.node().clientWidth;
+const h     = () => svg.node().clientHeight;
+
+svg.append("defs").append("marker")
+  .attr("id","arrow").attr("viewBox","0 -5 10 10")
+  .attr("refX",18).attr("refY",0)
+  .attr("markerWidth",6).attr("markerHeight",6)
+  .attr("orient","auto")
+  .append("path").attr("d","M0,-5L10,0L0,5").attr("fill","#555");
+
+const g = svg.append("g");
+
+// zoom + pan
+svg.call(d3.zoom().scaleExtent([0.2, 4])
+  .on("zoom", e => g.attr("transform", e.transform)));
+
+// данные для симуляции
+const simNodes = DATA.nodes.map(n => ({...n}));
+const nodeMap  = Object.fromEntries(simNodes.map(n => [n.id, n]));
+
+const simLinks = DATA.edges
+  .filter(e => nodeMap[e.source] && nodeMap[e.target])
+  .map(e => ({...e, source: nodeMap[e.source], target: nodeMap[e.target]}));
+
+// community hulls (выпуклые оболочки)
+const hullG = g.append("g").attr("class","hulls");
+// hyper-edge polygons
+const polyG = g.append("g").attr("class","polys");
+// fractal borders
+const borderG = g.append("g").attr("class","borders");
+// links
+const linkG = g.append("g");
+// nodes
+const nodeG = g.append("g");
+
+const link = linkG.selectAll("line").data(simLinks).join("line")
+  .attr("class","link")
+  .attr("stroke-width", d => Math.sqrt(d.weight)*2)
+  .attr("marker-end", d => d.directed ? "url(#arrow)" : null);
+
+const node = nodeG.selectAll("g").data(simNodes).join("g")
+  .attr("class","node")
+  .call(d3.drag()
+    .on("start", (e,d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+    .on("drag",  (e,d) => { d.fx=e.x; d.fy=e.y; })
+    .on("end",   (e,d) => { if (!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+node.append("circle")
+  .attr("r", 16)
+  .attr("fill", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#444c56"; })
+  .attr("stroke", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#666"; })
+  .on("mouseover", (e,d) => showTooltip(e, `<b>${d.label}</b><br>arch: ${d.archetype}<br>Q6: ${d.hex_id} [${d.bits.join("")}]`))
+  .on("mouseout",  () => hideTooltip())
+  .on("click",     (e,d) => { const comm = DATA.communities.find(c=>c.id===d.community); if(comm) selectComm(comm.id); });
+
+node.append("text")
+  .attr("dy","0.35em").attr("text-anchor","middle")
+  .text(d => d.label.slice(0,8));
+
+// simulation
+const sim = d3.forceSimulation(simNodes)
+  .force("link",    d3.forceLink(simLinks).id(d=>d.id).distance(80).strength(0.5))
+  .force("charge",  d3.forceManyBody().strength(-200))
+  .force("center",  d3.forceCenter(600, 400))
+  .force("collide", d3.forceCollide(30))
+  .on("tick", ticked);
+
+function ticked() {
+  link
+    .attr("x1", d=>d.source.x).attr("y1", d=>d.source.y)
+    .attr("x2", d=>d.target.x).attr("y2", d=>d.target.y);
+
+  node.attr("transform", d=>`translate(${d.x},${d.y})`);
+
+  drawHulls();
+  drawHyperPolys();
+  drawBorders();
+}
+
+function drawHulls() {
+  hullG.selectAll("path").remove();
+  DATA.communities.forEach(c => {
+    const pts = c.node_ids
+      .map(id => nodeMap[id])
+      .filter(Boolean)
+      .map(n => [n.x, n.y]);
+    if (pts.length < 2) return;
+    const col = PALETTE[c.color_idx % PALETTE.length];
+    try {
+      const hull = pts.length > 2 ? d3.polygonHull(pts) : pts;
+      if (!hull) return;
+      const padded = hull.map(([x,y]) => {
+        const cx = d3.mean(hull,p=>p[0]), cy = d3.mean(hull,p=>p[1]);
+        const dx=x-cx, dy=y-cy, len=Math.hypot(dx,dy)||1;
+        return [x + dx/len*20, y + dy/len*20];
+      });
+      hullG.append("path")
+        .attr("d", "M" + padded.map(p=>p.join(",")).join("L") + "Z")
+        .attr("class","hull")
+        .attr("fill",col).attr("stroke",col);
+    } catch(ex) {}
+  });
+}
+
+const SHAPE_COLORS = {
+  triangle:"#ffd700", rectangle:"#00bfff",
+  pentagon:"#7fff00", hexagon:"#da70d6",
+  heptagon:"#ff69b4", octagon:"#ff4500",
+  polygon:"#20b2aa", unknown:"#666"
+};
+
+function drawHyperPolys() {
+  polyG.selectAll("path").remove();
+  DATA.hyper_edges.forEach(he => {
+    const pts = he.nodes
+      .map(id => nodeMap[id]).filter(Boolean)
+      .map(n => [n.x, n.y]);
+    if (pts.length < 3) return;
+    try {
+      const hull = d3.polygonHull(pts); if (!hull) return;
+      polyG.append("path")
+        .attr("d","M"+hull.map(p=>p.join(",")).join("L")+"Z")
+        .attr("class","hyper-poly")
+        .attr("stroke", SHAPE_COLORS[he.shape]||"#666");
+    } catch(ex) {}
+  });
+}
+
+function drawBorders() {
+  borderG.selectAll("path").remove();
+  DATA.borders.forEach(b => {
+    const ca = DATA.communities.find(c=>c.id===b.a);
+    const cb = DATA.communities.find(c=>c.id===b.b);
+    if (!ca || !cb) return;
+    const ptsA = ca.node_ids.map(id=>nodeMap[id]).filter(Boolean);
+    const ptsB = cb.node_ids.map(id=>nodeMap[id]).filter(Boolean);
+    if (!ptsA.length || !ptsB.length) return;
+    const cx1 = d3.mean(ptsA,n=>n.x), cy1 = d3.mean(ptsA,n=>n.y);
+    const cx2 = d3.mean(ptsB,n=>n.x), cy2 = d3.mean(ptsB,n=>n.y);
+    const fd  = b.fd_box;
+    // фрактальная кривая — синусоидальное возмущение прямой
+    const pts = [];
+    const N = 12;
+    for (let i=0;i<=N;i++) {
+      const t  = i/N;
+      const x  = cx1 + t*(cx2-cx1);
+      const y  = cy1 + t*(cy2-cy1);
+      const dx = -(cy2-cy1), dy = cx2-cx1;
+      const len = Math.hypot(dx,dy)||1;
+      const amp = fd*15;
+      const noise = amp * Math.sin(Math.PI*t*3);
+      pts.push([x + noise*dx/len, y + noise*dy/len]);
+    }
+    borderG.append("path")
+      .attr("d","M"+pts.map(p=>p.join(",")).join("L"))
+      .attr("class","fractal-border")
+      .attr("stroke", "#58a6ff");
+  });
+}
+
+// tooltip
+const tooltip = document.getElementById("tooltip");
+function showTooltip(e, html) {
+  tooltip.innerHTML = html;
+  tooltip.style.opacity = 1;
+  tooltip.style.left = (e.offsetX+12)+"px";
+  tooltip.style.top  = (e.offsetY-10)+"px";
+}
+function hideTooltip() { tooltip.style.opacity=0; }
+</script>
+</body>
+</html>
