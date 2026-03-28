@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "infom": {
+      "command": "python",
+      "args": ["/home/user/infom/infom_mcp.py"],
+      "env": {
+        "PYTHONPATH": "/home/user/infom"
+      }
+    }
+  }
+}
