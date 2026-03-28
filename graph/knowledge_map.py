@@ -22,6 +22,209 @@ from graph.hyper_edge import HyperEdge, build_hyper_edges
 from graph.community  import Community, CommunityBorder
 
 
+# ── PCA-lite (power iteration, stdlib only) ──────────────────────────────────
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+def _sub_mean(vecs: list[list[float]]) -> list[list[float]]:
+    n, d = len(vecs), len(vecs[0])
+    mean = [sum(v[j] for v in vecs) / n for j in range(d)]
+    return [[v[j] - mean[j] for j in range(d)] for v in vecs]
+
+def _power_iter(centered: list[list[float]], n_iter: int = 20) -> list[float]:
+    """Нахождение первого собственного вектора (power iteration)."""
+    d = len(centered[0])
+    # начальный вектор — первая строка
+    v = list(centered[0]) if any(abs(x) > 1e-10 for x in centered[0]) else [1.0] + [0.0]*(d-1)
+    for _ in range(n_iter):
+        # Av = X^T (X v)
+        scores = [_dot(row, v) for row in centered]
+        new_v  = [sum(scores[i] * centered[i][j] for i in range(len(centered))) for j in range(d)]
+        norm   = math.sqrt(sum(x*x for x in new_v)) or 1.0
+        v      = [x / norm for x in new_v]
+    return v
+
+def _pca2d(
+    node_embeddings: dict[str, list[float]]
+) -> dict[str, tuple[float, float]]:
+    """
+    Проецируем N-мерные эмбеддинги на 2 главные компоненты (PCA-lite).
+    Если < 2 нод → возвращаем тривиальную проекцию.
+    """
+    ids  = list(node_embeddings.keys())
+    vecs = [node_embeddings[i] for i in ids]
+    d    = max(len(v) for v in vecs) if vecs else 0
+
+    if len(ids) <= 1 or d < 2:
+        # тривиальная проекция
+        return {
+            nid: (vecs[i][0] if len(vecs[i]) > 0 else 0.0,
+                  vecs[i][1] if len(vecs[i]) > 1 else 0.0)
+            for i, nid in enumerate(ids)
+        }
+
+    # выравниваем до одинаковой размерности
+    vecs = [v + [0.0] * (d - len(v)) for v in vecs]
+
+    # центрируем
+    centered = _sub_mean(vecs)
+
+    # первая компонента
+    pc1 = _power_iter(centered)
+    scores1 = [_dot(row, pc1) for row in centered]
+
+    # вычитаем проекцию на pc1
+    deflated = [
+        [centered[i][j] - scores1[i] * pc1[j] for j in range(d)]
+        for i in range(len(centered))
+    ]
+
+    # вторая компонента
+    if any(any(abs(x) > 1e-10 for x in row) for row in deflated):
+        pc2 = _power_iter(deflated)
+        scores2 = [_dot(row, pc2) for row in deflated]
+    else:
+        scores2 = [0.0] * len(ids)
+
+    return {nid: (scores1[i], scores2[i]) for i, nid in enumerate(ids)}
+
+
+def _compute_modularity(km: "KnowledgeMap") -> float:
+    """
+    Модулярность Newman-Girvan Q ∈ (-0.5, 1.0).
+    Q > 0.3 — хорошее разбиение, Q > 0.5 — отличное.
+
+    Q = (1/2m) * Σ_ij [A_ij - k_i*k_j/(2m)] * δ(c_i, c_j)
+
+    A_ij  = вес ребра i→j
+    k_i   = сумма весов рёбер из i (degree)
+    m     = половина суммы всех весов
+    δ     = 1 если i и j в одном сообществе
+    """
+    if not km.edges or not km.communities:
+        return 0.0
+
+    # карта нода → сообщество
+    node_comm: dict[str, str] = {}
+    for comm in km.communities.values():
+        for n in comm.nodes:
+            node_comm[n.id] = comm.id
+
+    # строим взвешенный граф как словарь
+    adj: dict[str, dict[str, float]] = {nid: {} for nid in km.nodes}
+    m2 = 0.0
+    for e in km.edges:
+        w = e.weight
+        adj[e.source][e.target] = adj[e.source].get(e.target, 0.0) + w
+        adj[e.target][e.source] = adj[e.target].get(e.source, 0.0) + w
+        m2 += 2 * w
+
+    if m2 == 0.0:
+        return 0.0
+
+    # степени нод
+    degree = {nid: sum(adj[nid].values()) for nid in km.nodes}
+
+    Q = 0.0
+    for e in km.edges:
+        i, j, w = e.source, e.target, e.weight
+        if node_comm.get(i) == node_comm.get(j):
+            Q += w - degree[i] * degree[j] / m2
+        # обратное ребро
+        if node_comm.get(j) == node_comm.get(i):
+            Q += w - degree[j] * degree[i] / m2
+
+    return Q / m2
+
+
+def _label_propagation(km: "KnowledgeMap", max_iter: int = 20) -> None:
+    """
+    Label Propagation поверх Q6 Voronoi-разбиения.
+
+    Рафинирует принадлежность нод к сообществам по топологии графа:
+    каждая нода итеративно «голосует» за сообщество своих соседей
+    (взвешено по силе ребра). Нода переходит в новое сообщество,
+    если соседи «голосуют» за другое сообщество сильнее, чем за текущее.
+
+    Это устраняет ситуацию когда Q6 кладёт семантически далёкие ноды
+    вместе только потому что у них совпал хеш.
+    """
+    if not km.edges:
+        return
+
+    # индекс: node_id → community_id
+    node_to_comm: dict[str, str] = {}
+    for comm in km.communities.values():
+        for n in comm.nodes:
+            node_to_comm[n.id] = comm.id
+
+    # adjacency: node_id → list[(neighbor_id, weight)]
+    adj: dict[str, list[tuple[str, float]]] = {nid: [] for nid in km.nodes}
+    for e in km.edges:
+        adj[e.source].append((e.target, e.weight))
+        adj[e.target].append((e.source, e.weight))
+
+    iters = 0
+    import random
+    rng = random.Random(42)
+
+    for it in range(max_iter):
+        changed = 0
+        order = list(km.nodes.keys())
+        rng.shuffle(order)
+
+        for nid in order:
+            nbrs = adj.get(nid, [])
+            if not nbrs:
+                continue
+            votes: dict[str, float] = {}
+            curr = node_to_comm[nid]
+            # self-vote: сильный вес для стабильности (требует явного большинства чтобы переехать)
+            votes[curr] = 1.0
+            for nb_id, w in nbrs:
+                nb_comm = node_to_comm.get(nb_id)
+                if nb_comm:
+                    votes[nb_comm] = votes.get(nb_comm, 0.0) + w
+            best = max(votes, key=votes.__getitem__)
+            # переезжаем только если чужое сообщество ЗНАЧИТЕЛЬНО сильнее (порог 1.5×)
+            if best != curr and votes[best] > votes.get(curr, 0.0) * 1.5:
+                node_to_comm[nid] = best
+                changed += 1
+
+        iters += 1
+        if changed == 0:
+            break
+
+    km.lp_iterations = iters
+
+    # перестраиваем сообщества по новым меткам
+    new_groups: dict[str, list] = {}
+    for nid, cid in node_to_comm.items():
+        new_groups.setdefault(cid, []).append(km.nodes[nid])
+
+    to_delete = []
+    for cid, comm in list(km.communities.items()):
+        new_nodes = new_groups.get(cid, [])
+        if not new_nodes:
+            to_delete.append(cid)
+            continue
+        if [n.id for n in new_nodes] == [n.id for n in comm.nodes]:
+            continue   # без изменений
+        comm.nodes = new_nodes
+        comm.edges = [
+            e for e in km.edges
+            if e.source in {n.id for n in new_nodes}
+            and e.target in {n.id for n in new_nodes}
+        ]
+        positions_2d = _pca2d({n.id: n.embedding for n in new_nodes})
+        comm.build_all_signatures(node_2d_positions=positions_2d)
+
+    # удаляем пустые сообщества
+    for cid in to_delete:
+        del km.communities[cid]
+
+
 @dataclass
 class KnowledgeMap:
     """
@@ -29,10 +232,13 @@ class KnowledgeMap:
     """
     nodes:       dict[str, GraphNode]     = field(default_factory=dict)
     edges:       list[GraphEdge]          = field(default_factory=list)
-    hyper_edges: list[HyperEdge]          = field(default_factory=list)
-    communities: dict[str, Community]     = field(default_factory=dict)
-    borders:     list[CommunityBorder]    = field(default_factory=list)
-    metadata:    dict[str, Any]           = field(default_factory=dict)
+    hyper_edges:   list[HyperEdge]          = field(default_factory=list)
+    communities:   dict[str, Community]     = field(default_factory=dict)
+    borders:       list[CommunityBorder]    = field(default_factory=list)
+    metadata:      dict[str, Any]           = field(default_factory=dict)
+    lp_iterations: int                      = 0
+    modularity:    float                    = 0.0
+    pca_positions: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     # ── добавление данных ────────────────────────────────────────────────
 
@@ -88,23 +294,21 @@ class KnowledgeMap:
                 edges = comm_edges,
             )
 
-            # 2D позиции через PCA-lite (первые 2 компоненты эмбеддинга)
-            positions_2d = {
-                n.id: (n.embedding[0] if len(n.embedding)>0 else 0.0,
-                       n.embedding[1] if len(n.embedding)>1 else 0.0)
-                for n in comm_nodes
-            }
+            # 2D позиции через PCA-lite (первые 2 главные компоненты, power iteration)
+            positions_2d = _pca2d({n.id: n.embedding for n in comm_nodes})
 
             community.build_all_signatures(node_2d_positions=positions_2d)
             self.add_community(community)
 
+        # 3b. Label Propagation — рафинируем сообщества по топологии графа
+        _label_propagation(self)
+
+        # 3c. Модулярность Q — качество разбиения на сообщества
+        self.modularity = _compute_modularity(self)
+
         # 4. Гиперрёбра
-        all_positions = {}
-        for node in self.nodes.values():
-            all_positions[node.id] = (
-                node.embedding[0] if len(node.embedding)>0 else 0.0,
-                node.embedding[1] if len(node.embedding)>1 else 0.0,
-            )
+        all_positions = _pca2d({n.id: n.embedding for n in self.nodes.values()})
+        self.pca_positions = all_positions   # сохраняем для ASCII/HTML
         self.hyper_edges = build_hyper_edges(
             list(self.nodes.keys()), self.edges, all_positions
         )

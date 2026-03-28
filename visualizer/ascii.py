@@ -64,7 +64,11 @@ def render_communities(km: KnowledgeMap) -> str:
     if not km.communities:
         return "Сообществ нет."
 
-    lines = [f"{BOLD}Сообщества ({len(km.communities)}):{RESET}"]
+    lp_info = ""
+    if km.lp_iterations:
+        mod_q   = f"  modularity Q={km.modularity:.3f}" if km.modularity else ""
+        lp_info = f"  {DIM}(LP: {km.lp_iterations} iter{mod_q}){RESET}"
+    lines = [f"{BOLD}Сообщества ({len(km.communities)}):{RESET}{lp_info}"]
     for i, comm in enumerate(km.communities.values()):
         cc   = COMMUNITY_COLORS[i % len(COMMUNITY_COLORS)]
         tag  = _color(f" {comm.id[-4:]} ", cc)
@@ -92,8 +96,9 @@ def render_communities(km: KnowledgeMap) -> str:
             bar    = "▓" if fd_avg > 1.5 else "░"
             fd_str = f" fd={fd_avg:.2f}{bar}"
 
+        arch_tag = f" \033[2m{comm.dominant_archetype}\033[0m" if comm.nodes else ""
         lines.append(
-            f"  {tag} {sstr} {scol}shape={shape.value if shape else '?':12s}{RESET}"
+            f"  {tag}{arch_tag} {sstr} {scol}shape={shape.value if shape else '?':12s}{RESET}"
             f" Q6={hid:2d}[{bits}] skel={skel:5s}{fd_str}"
             f"  [{nodes_str}]"
         )
@@ -151,52 +156,67 @@ def render_fractal_borders(km: KnowledgeMap) -> str:
 
 def render_graph_ascii(km: KnowledgeMap, width: int = 60) -> str:
     """
-    Простая ASCII-сетка: ноды расставлены по Q6-позиции,
-    рёбра показаны символами.
+    ASCII-сетка: ноды расставлены по PCA-координатам (глобальная проекция).
+    Рёбра показаны символом · в средней точке.
     """
     if not km.nodes:
         return ""
 
-    nodes  = list(km.nodes.values())
-    n      = len(nodes)
+    nodes = list(km.nodes.values())
+    n     = len(nodes)
+    H     = max(12, n + 2)
+    W     = width
 
-    # позиция ноды на сетке: проецируем hex_id в 2D
-    def q6_to_xy(hex_id: int, w: int, h: int) -> tuple[int, int]:
-        bits = [(hex_id >> i) & 1 for i in range(6)]
-        # первые 3 бита → x, последние 3 → y
-        x = int((bits[0]*4 + bits[1]*2 + bits[2]) / 7 * (w - 3))
-        y = int((bits[3]*4 + bits[4]*2 + bits[5]) / 7 * (h - 2))
-        return x, y
+    # используем PCA-позиции из KnowledgeMap если доступны
+    raw_pos = km.pca_positions if km.pca_positions else {
+        nd.id: (nd.embedding[0] if nd.embedding else 0.0,
+                nd.embedding[1] if len(nd.embedding) > 1 else 0.0)
+        for nd in nodes
+    }
 
-    H = max(12, n + 2)
-    W = width
+    # нормализуем в [0, W-7] × [0, H-2]
+    xs = [p[0] for p in raw_pos.values()]
+    ys = [p[1] for p in raw_pos.values()]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    dx = (x_max - x_min) or 1.0
+    dy = (y_max - y_min) or 1.0
+
+    def to_grid(nid: str) -> tuple[int, int]:
+        px, py = raw_pos.get(nid, (0.0, 0.0))
+        gx = int((px - x_min) / dx * (W - 8))
+        gy = int((py - y_min) / dy * (H - 2))
+        return gx, gy
+
     grid = [[" "] * W for _ in range(H)]
-
     node_pos: dict[str, tuple[int, int]] = {}
+
     for node in nodes:
-        x, y = q6_to_xy(node.hex_id, W, H)
-        # разрешаем коллизии
-        while grid[y][x] != " ":
-            x = (x + 2) % (W - 2)
+        x, y = to_grid(node.id)
+        y = max(0, min(H - 1, y))
+        # разрешаем коллизии сдвигом по x
+        while grid[y][x] != " " and x < W - 7:
+            x += 1
         label = node.label[:6]
         for j, ch in enumerate(label):
             if x + j < W:
                 grid[y][x + j] = ch
         node_pos[node.id] = (x + len(label) // 2, y)
 
-    # рёбра — упрощённо только горизонтальные/вертикальные сегменты
-    for edge in km.edges[:20]:
+    # рёбра — точка в середине между узлами
+    for edge in km.edges[:30]:
         if edge.source not in node_pos or edge.target not in node_pos:
             continue
         x0, y0 = node_pos[edge.source]
         x1, y1 = node_pos[edge.target]
-        # только если рядом
-        if abs(x0-x1) + abs(y0-y1) < 15:
-            mx, my = (x0+x1)//2, (y0+y1)//2
-            if 0 <= my < H and 0 <= mx < W and grid[my][mx] == " ":
-                grid[my][mx] = "·"
+        mx, my = (x0 + x1) // 2, (y0 + y1) // 2
+        if 0 <= my < H and 0 <= mx < W and grid[my][mx] == " ":
+            # символ ребра зависит от веса
+            grid[my][mx] = "·" if edge.weight < 0.7 else "•"
 
-    lines = [f"{BOLD}Граф (Q6-проекция, {n} нод, {len(km.edges)} рёбер):{RESET}"]
+    # модулярность в заголовке
+    mod_str = f"  Q={km.modularity:.3f}" if km.modularity != 0.0 else ""
+    lines = [f"{BOLD}Граф (PCA-проекция, {n} нод, {len(km.edges)} рёбер{mod_str}):{RESET}"]
     lines.append("┌" + "─" * W + "┐")
     for row in grid:
         lines.append("│" + "".join(row) + "│")

@@ -73,6 +73,22 @@ class Community:
         return len(self.nodes)
 
     @property
+    def dominant_archetype(self) -> str:
+        """Наиболее частый архетип среди нод сообщества."""
+        counts: dict[str, int] = {}
+        for n in self.nodes:
+            if n.archetype:
+                counts[n.archetype] = counts.get(n.archetype, 0) + 1
+        return max(counts, key=counts.__getitem__) if counts else "?"
+
+    @property
+    def short_label(self) -> str:
+        """Краткое читаемое имя: доминирующий архетип + первые ноды."""
+        arch  = self.dominant_archetype
+        names = [n.label[:6] for n in self.nodes[:2]]
+        return f"{arch}:{','.join(names)}" if names else arch
+
+    @property
     def center_embedding(self) -> list[float]:
         """Средний эмбеддинг всех нод сообщества."""
         if not self.nodes:

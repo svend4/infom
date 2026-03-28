@@ -63,17 +63,18 @@ def _km_to_json(km: KnowledgeMap) -> str:
                      "elevation": r.elevation}
                     for r in comm.octagram.rays]
         communities.append({
-            "id":       comm.id,
-            "label":    comm.label,
-            "hex_id":   comm.hex_id,
-            "bits":     list(comm.hex_sig.bits) if comm.hex_sig else [],
-            "shape":    shape,
-            "skeleton": skel,
-            "color_idx": i,
-            "node_ids": [n.id for n in comm.nodes],
-            "heptagram": hept,
-            "octagram":  octa,
-            "fd_box":    comm.fractal.fd_box if comm.fractal else 1.0,
+            "id":                comm.id,
+            "label":             comm.label,
+            "hex_id":            comm.hex_id,
+            "bits":              list(comm.hex_sig.bits) if comm.hex_sig else [],
+            "shape":             shape,
+            "skeleton":          skel,
+            "dominant_archetype": comm.dominant_archetype,
+            "color_idx":         i,
+            "node_ids":          [n.id for n in comm.nodes],
+            "heptagram":         hept,
+            "octagram":          octa,
+            "fd_box":            comm.fractal.fd_box if comm.fractal else 1.0,
         })
 
     # гиперрёбра
@@ -106,6 +107,8 @@ def _km_to_json(km: KnowledgeMap) -> str:
         "communities": communities,
         "hyper_edges": hyper_edges,
         "borders":     borders,
+        "modularity":  km.modularity,
+        "lp_iterations": km.lp_iterations,
     }, ensure_ascii=False, indent=2)
 
 
@@ -116,6 +119,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <title>InfoM — Knowledge Map</title>
+<style>
+.arch-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; font-weight: bold; margin: 1px;
+  background: #21262d; border: 1px solid;
+}
+</style>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -212,6 +222,8 @@ h3 { color: #8b949e; font-size: 12px; margin: 8px 0 4px; }
   <div id="stats"></div>
   <h2>Сообщества</h2>
   <div id="comm-list"></div>
+  <h2>Архетипы</h2>
+  <div id="arch-legend"></div>
   <h2>Подписи</h2>
   <div id="sig-panel">
     <div class="chart-wrap">
@@ -258,18 +270,32 @@ const SHAPE_SYMBOL = {
   octagon:"✳", polygon:"◇", unknown:"·"
 };
 
+// Цвета по архетипу (16 архетипов ADCO/ADEO/... )
+const ARCH_COLORS = {
+  "ADCO":"#58a6ff","ADEO":"#79c0ff","ASCO":"#56d364","ASEO":"#3fb950",
+  "ADCF":"#ffa657","ADEF":"#ff7b72","ASCF":"#f78166","ASEF":"#d2a8ff",
+  "MDCO":"#e3b341","MDEO":"#ffd700","MSCO":"#7ee787","MSEO":"#a5d6ff",
+  "MDCF":"#ff69b4","MDEF":"#da70d6","MSCF":"#20b2aa","MSEF":"#ff4500",
+};
+
+const archColor = arch => ARCH_COLORS[arch] || "#8b949e";
+
 const commColor = id => {
   const idx = DATA.communities.findIndex(c => c.id === id);
   return PALETTE[idx % PALETTE.length];
 };
 
 // ── sidebar ────────────────────────────────────────────────────────────────
+const modStr  = DATA.modularity ? `Q=${DATA.modularity.toFixed(3)}` : "Q=—";
+const lpStr   = DATA.lp_iterations ? `LP:${DATA.lp_iterations}` : "";
 document.getElementById("stats").innerHTML = `
   <div class="tag">${DATA.nodes.length} нод</div>
   <div class="tag">${DATA.edges.length} рёбер</div>
   <div class="tag">${DATA.hyper_edges.length} гиперрёбер</div>
   <div class="tag">${DATA.communities.length} сообществ</div>
   <div class="tag">${DATA.borders.length} границ</div>
+  <div class="tag" style="color:#3fb950;border-color:#3fb950">${modStr}</div>
+  ${lpStr ? `<div class="tag" style="color:#8b949e">${lpStr} iter</div>` : ""}
 `;
 
 let activeComm = null;
@@ -277,13 +303,16 @@ let activeComm = null;
 function renderCommList() {
   const el = document.getElementById("comm-list");
   el.innerHTML = DATA.communities.map(c => {
-    const sym = SHAPE_SYMBOL[c.shape] || "·";
-    const col = PALETTE[c.color_idx % PALETTE.length];
+    const sym  = SHAPE_SYMBOL[c.shape] || "·";
+    const col  = PALETTE[c.color_idx % PALETTE.length];
+    const arch = c.dominant_archetype || "?";
+    const ac   = archColor(arch);
     return `<div class="comm-card ${activeComm===c.id?'active':''}"
       style="border-color:${col}"
       onclick="selectComm('${c.id}')">
       <span style="color:${col};font-size:16px">${sym}</span>
-      <strong style="color:${col}"> ${c.label}</strong><br>
+      <strong style="color:${col}"> ${c.label}</strong>
+      <span class="tag" style="color:${ac};border-color:${ac};float:right">${arch}</span><br>
       <span class="tag shape-tag">${c.shape}</span>
       <span class="tag skel-tag">${c.skeleton}</span>
       <span class="tag q6-tag">Q6=${c.hex_id}</span>
@@ -306,6 +335,25 @@ function selectComm(id) {
   }
 }
 if (DATA.communities.length) selectComm(DATA.communities[0].id);
+
+// архетип-легенда (только используемые)
+(function() {
+  const usedArchs = [...new Set(DATA.nodes.map(n=>n.archetype).filter(Boolean))].sort();
+  const el = document.getElementById("arch-legend");
+  const ARCH_NAMES = {
+    "ADCO":"Agentic-Dig-Conv","ADEO":"Agentic-Dig-Expl",
+    "ASCO":"Agentic-Str-Conv","ASEO":"Agentic-Str-Expl",
+    "ADCF":"Agentic-Dig-Flux","ADEF":"Agentic-Dig-Evnt",
+    "ASCF":"Agentic-Str-Flux","ASEF":"Agentic-Str-Evnt",
+    "MDCO":"Morphic-Dig-Conv","MDEO":"Morphic-Dig-Expl",
+    "MSCO":"Morphic-Str-Conv","MSEO":"Morphic-Str-Expl",
+    "MDCF":"Morphic-Dig-Flux","MDEF":"Morphic-Dig-Evnt",
+    "MSCF":"Morphic-Str-Flux","MSEF":"Morphic-Str-Evnt",
+  };
+  el.innerHTML = usedArchs.map(a =>
+    `<span class="arch-tag" style="color:${archColor(a)};border-color:${archColor(a)}" title="${ARCH_NAMES[a]||a}">${a}</span>`
+  ).join("") || '<span style="color:#8b949e;font-size:11px">нет данных</span>';
+})();
 
 // ── spider chart ──────────────────────────────────────────────────────────
 function drawSpider(rays) {
@@ -507,9 +555,19 @@ const node = nodeG.selectAll("g").data(simNodes).join("g")
 
 node.append("circle")
   .attr("r", 16)
-  .attr("fill", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#444c56"; })
+  .attr("fill",   d => archColor(d.archetype))
   .attr("stroke", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#666"; })
-  .on("mouseover", (e,d) => showTooltip(e, `<b>${d.label}</b><br>arch: ${d.archetype}<br>Q6: ${d.hex_id} [${d.bits.join("")}]`))
+  .attr("stroke-width", 3)
+  .on("mouseover", (e,d) => {
+    const comm = DATA.communities.find(c=>c.id===d.community);
+    const commLabel = comm ? comm.label : "—";
+    showTooltip(e,
+      `<b>${d.label}</b><br>` +
+      `arch: <span style="color:${archColor(d.archetype)}">${d.archetype}</span><br>` +
+      `community: ${commLabel}<br>` +
+      `Q6: ${d.hex_id} [${d.bits.join("")}]`
+    );
+  })
   .on("mouseout",  () => hideTooltip())
   .on("click",     (e,d) => { const comm = DATA.communities.find(c=>c.id===d.community); if(comm) selectComm(comm.id); });
 
@@ -538,26 +596,36 @@ function ticked() {
 }
 
 function drawHulls() {
-  hullG.selectAll("path").remove();
+  hullG.selectAll("*").remove();
   DATA.communities.forEach(c => {
     const pts = c.node_ids
       .map(id => nodeMap[id])
       .filter(Boolean)
       .map(n => [n.x, n.y]);
     if (pts.length < 2) return;
-    const col = PALETTE[c.color_idx % PALETTE.length];
+    const col  = PALETTE[c.color_idx % PALETTE.length];
+    const arch = c.dominant_archetype || "";
+    const ac   = archColor(arch);
     try {
       const hull = pts.length > 2 ? d3.polygonHull(pts) : pts;
       if (!hull) return;
+      const hcx = d3.mean(hull,p=>p[0]);
+      const hcy = d3.mean(hull,p=>p[1]);
       const padded = hull.map(([x,y]) => {
-        const cx = d3.mean(hull,p=>p[0]), cy = d3.mean(hull,p=>p[1]);
-        const dx=x-cx, dy=y-cy, len=Math.hypot(dx,dy)||1;
+        const dx=x-hcx, dy=y-hcy, len=Math.hypot(dx,dy)||1;
         return [x + dx/len*20, y + dy/len*20];
       });
       hullG.append("path")
         .attr("d", "M" + padded.map(p=>p.join(",")).join("L") + "Z")
         .attr("class","hull")
         .attr("fill",col).attr("stroke",col);
+      // архетип + форма над центроидом
+      const sym = SHAPE_SYMBOL[c.shape] || "·";
+      hullG.append("text")
+        .attr("x", hcx).attr("y", hcy - 18)
+        .attr("text-anchor","middle").attr("font-size",10)
+        .attr("fill", ac).attr("opacity", 0.85)
+        .text(`${sym} ${arch}`);
     } catch(ex) {}
   });
 }

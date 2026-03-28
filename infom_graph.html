@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <title>InfoM — Knowledge Map</title>
+<style>
+.arch-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; font-weight: bold; margin: 1px;
+  background: #21262d; border: 1px solid;
+}
+</style>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -99,6 +106,8 @@ h3 { color: #8b949e; font-size: 12px; margin: 8px 0 4px; }
   <div id="stats"></div>
   <h2>Сообщества</h2>
   <div id="comm-list"></div>
+  <h2>Архетипы</h2>
+  <div id="arch-legend"></div>
   <h2>Подписи</h2>
   <div id="sig-panel">
     <div class="chart-wrap">
@@ -226,7 +235,7 @@ const DATA = {
         1,
         0
       ],
-      "community": "comm_5",
+      "community": "comm_3",
       "weight": 1.0
     },
     {
@@ -448,18 +457,20 @@ const DATA = {
       ],
       "shape": "pentagon",
       "skeleton": "tower",
+      "dominant_archetype": "ADEO",
       "color_idx": 0,
       "node_ids": [
         "n1",
         "n2",
         "n4",
         "n5",
-        "n10"
+        "n10",
+        "n6"
       ],
       "heptagram": [
         {
           "label": "strength",
-          "length": 0.7333333333333334,
+          "length": 0.7166666666666667,
           "angle": 0.0,
           "z": 0.0
         },
@@ -477,15 +488,15 @@ const DATA = {
         },
         {
           "label": "confidence",
-          "length": 0.7333333333333334,
+          "length": 0.7166666666666667,
           "angle": 2.6927937030769655,
-          "z": 0.1590907043431047
+          "z": 0.15547500651712504
         },
         {
           "label": "scale",
-          "length": 0.15,
+          "length": 0.3,
           "angle": 3.5903916041026207,
-          "z": -0.03254128043381685
+          "z": -0.0650825608676337
         },
         {
           "label": "context",
@@ -558,6 +569,7 @@ const DATA = {
       ],
       "shape": "polygon",
       "skeleton": "fractal",
+      "dominant_archetype": "ADCO",
       "color_idx": 1,
       "node_ids": [
         "n3"
@@ -662,11 +674,11 @@ const DATA = {
         0,
         0
       ],
-      "shape": "rectangle",
+      "shape": "polygon",
       "skeleton": "tower",
+      "dominant_archetype": "MSCF",
       "color_idx": 2,
       "node_ids": [
-        "n6",
         "n12"
       ],
       "heptagram": [
@@ -771,6 +783,7 @@ const DATA = {
       ],
       "shape": "polygon",
       "skeleton": "fractal",
+      "dominant_archetype": "ASCO",
       "color_idx": 3,
       "node_ids": [
         "n7",
@@ -873,10 +886,10 @@ const DATA = {
       "label": "quad",
       "shape": "polygon",
       "nodes": [
-        "n1",
-        "n7",
         "n2",
-        "n3"
+        "n3",
+        "n1",
+        "n7"
       ],
       "weight": 1.0
     },
@@ -885,10 +898,10 @@ const DATA = {
       "label": "quad",
       "shape": "polygon",
       "nodes": [
-        "n1",
-        "n10",
         "n2",
-        "n3"
+        "n3",
+        "n1",
+        "n10"
       ],
       "weight": 1.0
     },
@@ -897,9 +910,9 @@ const DATA = {
       "label": "triad",
       "shape": "triangle",
       "nodes": [
-        "n1",
         "n2",
-        "n3"
+        "n3",
+        "n1"
       ],
       "weight": 1.0
     },
@@ -908,8 +921,8 @@ const DATA = {
       "label": "triad",
       "shape": "triangle",
       "nodes": [
-        "n5",
         "n4",
+        "n5",
         "n6"
       ],
       "weight": 1.0
@@ -917,12 +930,12 @@ const DATA = {
     {
       "id": "he_n7",
       "label": "quad",
-      "shape": "rectangle",
+      "shape": "polygon",
       "nodes": [
         "n8",
-        "n7",
         "n1",
-        "n9"
+        "n9",
+        "n7"
       ],
       "weight": 1.0
     },
@@ -932,20 +945,20 @@ const DATA = {
       "shape": "triangle",
       "nodes": [
         "n8",
-        "n7",
-        "n9"
+        "n9",
+        "n7"
       ],
       "weight": 1.0
     },
     {
       "id": "he_n10",
       "label": "quad",
-      "shape": "rectangle",
+      "shape": "triangle",
       "nodes": [
-        "n10",
-        "n2",
+        "n12",
         "n11",
-        "n12"
+        "n2",
+        "n10"
       ],
       "weight": 1.0
     },
@@ -954,9 +967,9 @@ const DATA = {
       "label": "triad",
       "shape": "triangle",
       "nodes": [
-        "n10",
+        "n12",
         "n11",
-        "n12"
+        "n10"
       ],
       "weight": 1.0
     }
@@ -1030,59 +1043,59 @@ const DATA = {
       "fd_box": 1.0,
       "fd_divider": 1.0,
       "ifs": [
-        -0.14443992171393172,
-        0.08140054464656235,
-        -0.14474264879166143,
-        -0.1286106755933134
+        -0.14443992171310566,
+        0.0814005446460966,
+        -0.14474264879083348,
+        -0.12861067559257788
       ],
       "curve": [
         [
-          0.897339541168313,
-          -0.28847134506268984
+          0.8982263607788754,
+          -0.3884713450626898
         ],
         [
-          0.8558112234199481,
-          -0.23475643623821457
+          0.8613209574572703,
+          -0.33262877666374646
         ],
         [
-          0.8061639176490326,
-          -0.1458592459826871
+          0.819002895453965,
+          -0.2416039268337509
         ],
         [
-          0.7622987026206434,
-          -0.08201778227810694
+          0.7805395606123439,
+          -0.17563480355470268
         ],
         [
-          0.7321834529321172,
-          -0.07775950171293339
+          0.7512428693306313,
+          -0.16924886341506107
         ],
         [
-          0.7065520161624169,
-          -0.09293107712933865
+          0.7249353866614694,
+          -0.18229277925699816
         ],
         [
-          0.6675832536007817,
-          -0.050307574114025755
+          0.6897363534643509,
+          -0.1375416166672172
         ],
         [
-          0.6105563886080919,
-          0.07056770610252383
+          0.642498585313196,
+          -0.01453867687619953
         ],
         [
-          0.5556474642936601,
-          0.18226524337995553
+          0.5966727776142131,
+          0.0992865199757002
         ],
         [
-          0.5347041550860474,
-          0.14677844852783745
+          0.5734907133197763,
+          0.0659273846980502
         ],
         [
-          0.5626424883851296,
-          -0.10052879718662538
+          0.5828964106964695,
+          -0.17925220144194448
         ],
         [
-          0.6201482237921129,
-          -0.47596145203532625
+          0.6120137094784298,
+          -0.5525571967161773
         ]
       ]
     },
@@ -1092,59 +1105,59 @@ const DATA = {
       "fd_box": 1.0,
       "fd_divider": 1.0,
       "ifs": [
-        -0.3203940900291712,
+        -0.3203940900336421,
         0.95,
-        0.8829157833292025,
-        0.22596006140394667
+        0.8829157833415233,
+        0.22596006140709987
       ],
       "curve": [
         [
-          0.7682612226031651,
-          0.951733364148303
+          0.8195646289947249,
+          0.7956462899472481
         ],
         [
-          0.7430148454813881,
-          1.0222468855061224
+          0.8056135554033604,
+          0.8710291710548796
         ],
         [
-          0.7157463344827799,
-          1.12578859351885
+          0.7950327049400479,
+          0.98011428344303
         ],
         [
-          0.6923716153962041,
-          1.165731700301718
+          0.7779622012900148,
+          1.0243028639639764
         ],
         [
-          0.678145689050267,
-          1.0562445256541502
+          0.7456437097389169,
+          0.9160115654742741
         ],
         [
-          0.6724711316825371,
-          0.8070849910291984
+          0.6990729365574737,
+          0.6651974506811186
         ],
         [
-          0.668429486384444,
-          0.5312545592668497
+          0.6497806432599695,
+          0.3871681347273541
         ],
         [
-          0.6578502283825343,
-          0.3622051350001682
+          0.6113843711354928,
+          0.21809903050386226
         ],
         [
-          0.6374974220717086,
-          0.35279033311244967
+          0.5892773461925428,
+          0.21192239809563895
         ],
         [
-          0.6108864544765127,
-          0.44559216553610864
+          0.5776005900568761,
+          0.3100484537602497
         ],
         [
-          0.5843992417596842,
-          0.5363726682797697
+          0.5657175757905974,
+          0.4061119281187402
         ],
         [
-          0.5616428412949676,
-          0.5662165709056002
+          0.547616541104132,
+          0.4399951982753627
         ]
       ]
     },
@@ -1154,63 +1167,65 @@ const DATA = {
       "fd_box": 1.0,
       "fd_divider": 1.0,
       "ifs": [
-        -0.020323114550979522,
-        -0.37281378527585557,
-        0.7346582920752367,
-        0.812160953760957
+        -0.020323114550159022,
+        -0.3728137852608113,
+        0.7346582920455912,
+        0.812160953728184
       ],
       "curve": [
         [
-          1.0396811920917748,
-          -0.284187034857535
+          1.0317747095205423,
+          -0.3868225290479458
         ],
         [
-          1.033384153075798,
-          -0.26205767516363915
+          1.0261151183171922,
+          -0.3658991264661532
         ],
         [
-          1.0318990077941894,
-          -0.2393835727828337
+          1.024995049504755,
+          -0.3445217716452692
         ],
         [
-          1.0406004182571522,
-          -0.21555627541207678
+          1.033484938941914,
+          -0.3221834209994257
         ],
         [
-          1.062087060370909,
-          -0.19028159332613562
+          1.0540363676722744,
+          -0.29863891642426194
         ],
         [
-          1.0948696141373537,
-          -0.16372812878894677
+          1.0852443168296995,
+          -0.2740287598063918
         ],
         [
-          1.1330970436568155,
-          -0.13655826322311448
+          1.1215889412258195,
+          -0.2489049356646522
         ],
         [
-          1.1674823197850315,
-          -0.10982335841855531
+          1.1543088926113303,
+          -0.22414357882397343
         ],
         [
-          1.1872650182144822,
-          -0.0847415756176299
+          1.1732528272998928,
+          -0.2007598236529895
         ],
         [
-          1.1827562278924129,
-          -0.06240977267536721
+          1.1692802631662667,
+          -0.1796677183642245
         ],
         [
-          1.1478322672247083,
-          -0.043521196564685796
+          1.136614142102796,
+          -0.16144496876844389
         ],
         [
-          1.081729721341069,
-          -0.028162271610525338
+          1.0745342614016509,
+          -0.1461635951364307
         ]
       ]
     }
-  ]
+  ],
+  "modularity": 0.4702012686976271,
+  "lp_iterations": 2
 };
 
 // ── цвета ──────────────────────────────────────────────────────────────────
@@ -1225,18 +1240,32 @@ const SHAPE_SYMBOL = {
   octagon:"✳", polygon:"◇", unknown:"·"
 };
 
+// Цвета по архетипу (16 архетипов ADCO/ADEO/... )
+const ARCH_COLORS = {
+  "ADCO":"#58a6ff","ADEO":"#79c0ff","ASCO":"#56d364","ASEO":"#3fb950",
+  "ADCF":"#ffa657","ADEF":"#ff7b72","ASCF":"#f78166","ASEF":"#d2a8ff",
+  "MDCO":"#e3b341","MDEO":"#ffd700","MSCO":"#7ee787","MSEO":"#a5d6ff",
+  "MDCF":"#ff69b4","MDEF":"#da70d6","MSCF":"#20b2aa","MSEF":"#ff4500",
+};
+
+const archColor = arch => ARCH_COLORS[arch] || "#8b949e";
+
 const commColor = id => {
   const idx = DATA.communities.findIndex(c => c.id === id);
   return PALETTE[idx % PALETTE.length];
 };
 
 // ── sidebar ────────────────────────────────────────────────────────────────
+const modStr  = DATA.modularity ? `Q=${DATA.modularity.toFixed(3)}` : "Q=—";
+const lpStr   = DATA.lp_iterations ? `LP:${DATA.lp_iterations}` : "";
 document.getElementById("stats").innerHTML = `
   <div class="tag">${DATA.nodes.length} нод</div>
   <div class="tag">${DATA.edges.length} рёбер</div>
   <div class="tag">${DATA.hyper_edges.length} гиперрёбер</div>
   <div class="tag">${DATA.communities.length} сообществ</div>
   <div class="tag">${DATA.borders.length} границ</div>
+  <div class="tag" style="color:#3fb950;border-color:#3fb950">${modStr}</div>
+  ${lpStr ? `<div class="tag" style="color:#8b949e">${lpStr} iter</div>` : ""}
 `;
 
 let activeComm = null;
@@ -1244,13 +1273,16 @@ let activeComm = null;
 function renderCommList() {
   const el = document.getElementById("comm-list");
   el.innerHTML = DATA.communities.map(c => {
-    const sym = SHAPE_SYMBOL[c.shape] || "·";
-    const col = PALETTE[c.color_idx % PALETTE.length];
+    const sym  = SHAPE_SYMBOL[c.shape] || "·";
+    const col  = PALETTE[c.color_idx % PALETTE.length];
+    const arch = c.dominant_archetype || "?";
+    const ac   = archColor(arch);
     return `<div class="comm-card ${activeComm===c.id?'active':''}"
       style="border-color:${col}"
       onclick="selectComm('${c.id}')">
       <span style="color:${col};font-size:16px">${sym}</span>
-      <strong style="color:${col}"> ${c.label}</strong><br>
+      <strong style="color:${col}"> ${c.label}</strong>
+      <span class="tag" style="color:${ac};border-color:${ac};float:right">${arch}</span><br>
       <span class="tag shape-tag">${c.shape}</span>
       <span class="tag skel-tag">${c.skeleton}</span>
       <span class="tag q6-tag">Q6=${c.hex_id}</span>
@@ -1273,6 +1305,25 @@ function selectComm(id) {
   }
 }
 if (DATA.communities.length) selectComm(DATA.communities[0].id);
+
+// архетип-легенда (только используемые)
+(function() {
+  const usedArchs = [...new Set(DATA.nodes.map(n=>n.archetype).filter(Boolean))].sort();
+  const el = document.getElementById("arch-legend");
+  const ARCH_NAMES = {
+    "ADCO":"Agentic-Dig-Conv","ADEO":"Agentic-Dig-Expl",
+    "ASCO":"Agentic-Str-Conv","ASEO":"Agentic-Str-Expl",
+    "ADCF":"Agentic-Dig-Flux","ADEF":"Agentic-Dig-Evnt",
+    "ASCF":"Agentic-Str-Flux","ASEF":"Agentic-Str-Evnt",
+    "MDCO":"Morphic-Dig-Conv","MDEO":"Morphic-Dig-Expl",
+    "MSCO":"Morphic-Str-Conv","MSEO":"Morphic-Str-Expl",
+    "MDCF":"Morphic-Dig-Flux","MDEF":"Morphic-Dig-Evnt",
+    "MSCF":"Morphic-Str-Flux","MSEF":"Morphic-Str-Evnt",
+  };
+  el.innerHTML = usedArchs.map(a =>
+    `<span class="arch-tag" style="color:${archColor(a)};border-color:${archColor(a)}" title="${ARCH_NAMES[a]||a}">${a}</span>`
+  ).join("") || '<span style="color:#8b949e;font-size:11px">нет данных</span>';
+})();
 
 // ── spider chart ──────────────────────────────────────────────────────────
 function drawSpider(rays) {
@@ -1474,9 +1525,19 @@ const node = nodeG.selectAll("g").data(simNodes).join("g")
 
 node.append("circle")
   .attr("r", 16)
-  .attr("fill", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#444c56"; })
+  .attr("fill",   d => archColor(d.archetype))
   .attr("stroke", d => { const c=DATA.communities.find(c=>c.id===d.community); return c?PALETTE[c.color_idx%PALETTE.length]:"#666"; })
-  .on("mouseover", (e,d) => showTooltip(e, `<b>${d.label}</b><br>arch: ${d.archetype}<br>Q6: ${d.hex_id} [${d.bits.join("")}]`))
+  .attr("stroke-width", 3)
+  .on("mouseover", (e,d) => {
+    const comm = DATA.communities.find(c=>c.id===d.community);
+    const commLabel = comm ? comm.label : "—";
+    showTooltip(e,
+      `<b>${d.label}</b><br>` +
+      `arch: <span style="color:${archColor(d.archetype)}">${d.archetype}</span><br>` +
+      `community: ${commLabel}<br>` +
+      `Q6: ${d.hex_id} [${d.bits.join("")}]`
+    );
+  })
   .on("mouseout",  () => hideTooltip())
   .on("click",     (e,d) => { const comm = DATA.communities.find(c=>c.id===d.community); if(comm) selectComm(comm.id); });
 
@@ -1505,26 +1566,36 @@ function ticked() {
 }
 
 function drawHulls() {
-  hullG.selectAll("path").remove();
+  hullG.selectAll("*").remove();
   DATA.communities.forEach(c => {
     const pts = c.node_ids
       .map(id => nodeMap[id])
       .filter(Boolean)
       .map(n => [n.x, n.y]);
     if (pts.length < 2) return;
-    const col = PALETTE[c.color_idx % PALETTE.length];
+    const col  = PALETTE[c.color_idx % PALETTE.length];
+    const arch = c.dominant_archetype || "";
+    const ac   = archColor(arch);
     try {
       const hull = pts.length > 2 ? d3.polygonHull(pts) : pts;
       if (!hull) return;
+      const hcx = d3.mean(hull,p=>p[0]);
+      const hcy = d3.mean(hull,p=>p[1]);
       const padded = hull.map(([x,y]) => {
-        const cx = d3.mean(hull,p=>p[0]), cy = d3.mean(hull,p=>p[1]);
-        const dx=x-cx, dy=y-cy, len=Math.hypot(dx,dy)||1;
+        const dx=x-hcx, dy=y-hcy, len=Math.hypot(dx,dy)||1;
         return [x + dx/len*20, y + dy/len*20];
       });
       hullG.append("path")
         .attr("d", "M" + padded.map(p=>p.join(",")).join("L") + "Z")
         .attr("class","hull")
         .attr("fill",col).attr("stroke",col);
+      // архетип + форма над центроидом
+      const sym = SHAPE_SYMBOL[c.shape] || "·";
+      hullG.append("text")
+        .attr("x", hcx).attr("y", hcy - 18)
+        .attr("text-anchor","middle").attr("font-size",10)
+        .attr("fill", ac).attr("opacity", 0.85)
+        .text(`${sym} ${arch}`);
     } catch(ex) {}
   });
 }
