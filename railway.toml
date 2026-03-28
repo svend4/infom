@@ -1,0 +1,18 @@
+# Railway.app — деплой InfoM API
+# Документация: https://docs.railway.app
+# Команда: railway up
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python infom_api.py"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Переменные окружения задаются в Railway Dashboard:
+# INFOM_PROVIDER   = groq | openrouter | cohere | openai
+# GROQ_API_KEY     = gsk-...
+# COHERE_API_KEY   = ...
+# JINA_API_KEY     = ...
+# PORT             = 8000  (Railway задаёт автоматически)

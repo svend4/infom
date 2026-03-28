@@ -313,3 +313,243 @@ class OpenAIAdapter(LLMAdapter):
                 return data["data"][0]["embedding"]
         except (urllib.error.URLError, OSError) as e:
             raise ConnectionError(f"API недоступен: {e}") from e
+
+
+class CohereAdapter(LLMAdapter):
+    """
+    Адаптер для Cohere API.
+    Лучший выбор для многоязычных эмбеддингов (русский, немецкий, английский).
+    embed-multilingual-v3.0 → 1024D, поддерживает 100+ языков.
+    Регистрация: https://cohere.com (бесплатный тир: 1000 embed/мин)
+    """
+
+    def __init__(
+        self,
+        api_key:     str = "",
+        model:       str = "command-r-plus",
+        embed_model: str = "embed-multilingual-v3.0",
+        timeout:     int = 30,
+    ):
+        self.api_key     = api_key
+        self.model       = model
+        self.embed_model = embed_model
+        self.base_url    = "https://api.cohere.com/v2"
+        self.timeout     = timeout
+
+    def complete(self, prompt: str, **kwargs) -> LLMResponse:
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode()
+        req = urllib.request.Request(
+            f"{self.base_url}/chat",
+            data    = payload,
+            headers = {
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read())
+                text = data["message"]["content"][0]["text"]
+                return LLMResponse(
+                    text   = text,
+                    model  = self.model,
+                    tokens = data.get("usage", {}).get("tokens", {}).get("output_tokens", 0),
+                )
+        except (urllib.error.URLError, OSError) as e:
+            raise ConnectionError(f"Cohere недоступен: {e}") from e
+
+    def embed(self, text: str) -> list[float]:
+        payload = json.dumps({
+            "model":      self.embed_model,
+            "texts":      [text],
+            "input_type": "search_document",
+        }).encode()
+        req = urllib.request.Request(
+            f"{self.base_url}/embed",
+            data    = payload,
+            headers = {
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read())
+                return data["embeddings"]["float"][0]
+        except (urllib.error.URLError, OSError) as e:
+            raise ConnectionError(f"Cohere недоступен: {e}") from e
+
+
+class JinaAdapter(LLMAdapter):
+    """
+    Адаптер для Jina AI — специализированный на эмбеддингах.
+    jina-embeddings-v3 → 1024D, мультиязычный, SOTA на MTEB.
+    Бесплатный тир: 1 000 000 токенов.
+    Регистрация: https://jina.ai
+    """
+
+    def __init__(
+        self,
+        api_key:     str = "",
+        embed_model: str = "jina-embeddings-v3",
+        timeout:     int = 30,
+    ):
+        self.api_key     = api_key
+        self.embed_model = embed_model
+        self.timeout     = timeout
+
+    def complete(self, prompt: str, **kwargs) -> LLMResponse:
+        from semantic_sim import SemanticAdapter
+        return SemanticAdapter().complete(prompt, **kwargs)
+
+    def embed(self, text: str) -> list[float]:
+        payload = json.dumps({
+            "model": self.embed_model,
+            "input": [text],
+            "task":  "retrieval.passage",
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.jina.ai/v1/embeddings",
+            data    = payload,
+            headers = {
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read())
+                return data["data"][0]["embedding"]
+        except (urllib.error.URLError, OSError) as e:
+            raise ConnectionError(f"Jina недоступен: {e}") from e
+
+
+class GroqAdapter(OpenAIAdapter):
+    """
+    Адаптер для Groq — сверхбыстрый инференс на LPU чипах.
+    Бесплатный тир: 14 400 запросов/день.
+    Регистрация: https://console.groq.com
+    Модели: llama-3.3-70b-versatile, mixtral-8x7b, gemma2-9b-it
+    Groq не делает эмбеддинги — нужен отдельный embed_adapter.
+    """
+
+    def __init__(
+        self,
+        api_key:      str            = "",
+        model:        str            = "llama-3.3-70b-versatile",
+        embed_via:    str            = "jina",    # "jina" | "cohere" | "openai"
+        embed_key:    str            = "",
+        timeout:      int            = 30,
+    ):
+        super().__init__(
+            api_key  = api_key,
+            model    = model,
+            base_url = "https://api.groq.com/openai/v1",
+            timeout  = timeout,
+        )
+        self._embed_via = embed_via
+        self._embed_key = embed_key or api_key
+        self._embed_adapter: LLMAdapter | None = None
+
+    def _get_embed_adapter(self) -> LLMAdapter:
+        if self._embed_adapter is None:
+            if self._embed_via == "cohere":
+                self._embed_adapter = CohereAdapter(api_key=self._embed_key)
+            elif self._embed_via == "openai":
+                self._embed_adapter = OpenAIAdapter(api_key=self._embed_key)
+            else:
+                self._embed_adapter = JinaAdapter(api_key=self._embed_key)
+        return self._embed_adapter
+
+    def embed(self, text: str) -> list[float]:
+        return self._get_embed_adapter().embed(text)
+
+
+class OpenRouterAdapter(OpenAIAdapter):
+    """
+    Адаптер для OpenRouter — агрегатор 300+ моделей через один API.
+    Бесплатные модели: google/gemini-2.0-flash-exp:free, meta-llama/llama-3.1-8b-instruct:free
+    Регистрация: https://openrouter.ai
+    """
+
+    def __init__(
+        self,
+        api_key:     str = "",
+        model:       str = "google/gemini-2.0-flash-exp:free",
+        embed_via:   str = "jina",    # "jina" | "cohere" | "openai"
+        embed_key:   str = "",
+        timeout:     int = 30,
+    ):
+        super().__init__(
+            api_key  = api_key,
+            model    = model,
+            base_url = "https://openrouter.ai/api/v1",
+            timeout  = timeout,
+        )
+        self._embed_via = embed_via
+        self._embed_key = embed_key or api_key
+        self._embed_adapter: LLMAdapter | None = None
+
+    def complete(self, prompt: str, **kwargs) -> LLMResponse:
+        payload = json.dumps({
+            "model":    self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            **kwargs,
+        }).encode()
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data    = payload,
+            headers = {
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "HTTP-Referer":  "https://github.com/svend4/infom",
+                "X-Title":       "InfoM GraphRAG",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read())
+                text = data["choices"][0]["message"]["content"]
+                return LLMResponse(
+                    text   = text,
+                    model  = self.model,
+                    tokens = data.get("usage", {}).get("total_tokens", 0),
+                )
+        except (urllib.error.URLError, OSError) as e:
+            raise ConnectionError(f"OpenRouter недоступен: {e}") from e
+
+    def embed(self, text: str) -> list[float]:
+        if self._embed_adapter is None:
+            if self._embed_via == "cohere":
+                self._embed_adapter = CohereAdapter(api_key=self._embed_key)
+            elif self._embed_via == "openai":
+                self._embed_adapter = OpenAIAdapter(api_key=self._embed_key)
+            else:
+                self._embed_adapter = JinaAdapter(api_key=self._embed_key)
+        return self._embed_adapter.embed(text)
+
+
+class TogetherAdapter(OpenAIAdapter):
+    """
+    Адаптер для Together AI — дешёвый хостинг open-source моделей.
+    Бесплатно: $1 стартовый кредит. Embeddings: m2-bert → 768D.
+    Регистрация: https://together.ai
+    """
+
+    def __init__(
+        self,
+        api_key:     str = "",
+        model:       str = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        embed_model: str = "togethercomputer/m2-bert-80M-8k-retrieval",
+        timeout:     int = 30,
+    ):
+        super().__init__(
+            api_key     = api_key,
+            model       = model,
+            embed_model = embed_model,
+            base_url    = "https://api.together.xyz/v1",
+            timeout     = timeout,
+        )
