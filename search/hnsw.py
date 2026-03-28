@@ -255,22 +255,30 @@ class HNSWSearch:
         if query_ifs:
             top_for_rerank = self._ifs_rerank(top_for_rerank, query_ifs)
 
-        # HyperEdge matching по shape + nodes
+        # HyperEdge matching: score = средняя embedding-similarity нод + overlap bonus
         if include_hypers:
+            node_scores = {
+                c.item_id: c.score
+                for c in top_for_rerank
+                if c.item_type == "node"
+            }
             for he in self.km.hyper_edges:
-                # гиперребро релевантно если хотя бы одна его нода — кандидат
-                node_ids  = set(he.nodes)
-                cand_ids  = {c.item_id for c in top_for_rerank if c.item_type == "node"}
-                overlap   = len(node_ids & cand_ids)
-                if overlap > 0:
-                    score = overlap / len(node_ids)
-                    top_for_rerank.append(HNSWCandidate(
-                        item_id   = he.id,
-                        item_type = "hyper_edge",
-                        score     = score,
-                        distance  = 0.0,
-                        stage     = 2,
-                    ))
+                node_ids = set(he.nodes)
+                matched  = node_ids & set(node_scores.keys())
+                if not matched:
+                    continue
+                # средний score найденных нод (не просто overlap/total)
+                avg_node_score = sum(node_scores[nid] for nid in matched) / len(node_ids)
+                # штраф за частичное покрытие: 70% weight если не все ноды найдены
+                coverage_ratio = len(matched) / len(node_ids)
+                he_score = avg_node_score * (0.7 + 0.3 * coverage_ratio)
+                top_for_rerank.append(HNSWCandidate(
+                    item_id   = he.id,
+                    item_type = "hyper_edge",
+                    score     = he_score,
+                    distance  = 0.0,
+                    stage     = 2,
+                ))
 
         # финальная сортировка
         top_for_rerank.sort(key=lambda c: c.score, reverse=True)

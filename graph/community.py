@@ -96,9 +96,25 @@ class Community:
     ) -> None:
         """Вычислить все геометрические подписи сообщества."""
         # TangramSignature — форма внутреннего графа
-        if node_2d_positions and len(node_2d_positions) >= 3:
+        if node_2d_positions:
             positions = list(node_2d_positions.values())
-            self.tangram = build_tangram_signature(positions)
+            if len(positions) >= 3:
+                self.tangram = build_tangram_signature(positions)
+            elif len(positions) == 2:
+                # 2 ноды → отрезок: TangramSignature с ShapeClass.POLYGON
+                from signatures import ShapeClass, TangramSignature
+                self.tangram = TangramSignature(
+                    polygon=positions, shape_class=ShapeClass.RECTANGLE,
+                    centroid=((positions[0][0]+positions[1][0])/2,
+                              (positions[0][1]+positions[1][1])/2),
+                    angle=0.0, scale=1.0, area=0.0,
+                )
+            elif len(positions) == 1:
+                from signatures import ShapeClass, TangramSignature
+                self.tangram = TangramSignature(
+                    polygon=positions, shape_class=ShapeClass.POLYGON,
+                    centroid=positions[0], angle=0.0, scale=0.0, area=0.0,
+                )
 
         # FractalSignature — граница сообщества
         if boundary_curve and len(boundary_curve) >= 4:
