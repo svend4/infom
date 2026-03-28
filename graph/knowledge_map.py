@@ -22,6 +22,74 @@ from graph.hyper_edge import HyperEdge, build_hyper_edges
 from graph.community  import Community, CommunityBorder
 
 
+# ── PCA-lite (power iteration, stdlib only) ──────────────────────────────────
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+def _sub_mean(vecs: list[list[float]]) -> list[list[float]]:
+    n, d = len(vecs), len(vecs[0])
+    mean = [sum(v[j] for v in vecs) / n for j in range(d)]
+    return [[v[j] - mean[j] for j in range(d)] for v in vecs]
+
+def _power_iter(centered: list[list[float]], n_iter: int = 20) -> list[float]:
+    """Нахождение первого собственного вектора (power iteration)."""
+    d = len(centered[0])
+    # начальный вектор — первая строка
+    v = list(centered[0]) if any(abs(x) > 1e-10 for x in centered[0]) else [1.0] + [0.0]*(d-1)
+    for _ in range(n_iter):
+        # Av = X^T (X v)
+        scores = [_dot(row, v) for row in centered]
+        new_v  = [sum(scores[i] * centered[i][j] for i in range(len(centered))) for j in range(d)]
+        norm   = math.sqrt(sum(x*x for x in new_v)) or 1.0
+        v      = [x / norm for x in new_v]
+    return v
+
+def _pca2d(
+    node_embeddings: dict[str, list[float]]
+) -> dict[str, tuple[float, float]]:
+    """
+    Проецируем N-мерные эмбеддинги на 2 главные компоненты (PCA-lite).
+    Если < 2 нод → возвращаем тривиальную проекцию.
+    """
+    ids  = list(node_embeddings.keys())
+    vecs = [node_embeddings[i] for i in ids]
+    d    = max(len(v) for v in vecs) if vecs else 0
+
+    if len(ids) <= 1 or d < 2:
+        # тривиальная проекция
+        return {
+            nid: (vecs[i][0] if len(vecs[i]) > 0 else 0.0,
+                  vecs[i][1] if len(vecs[i]) > 1 else 0.0)
+            for i, nid in enumerate(ids)
+        }
+
+    # выравниваем до одинаковой размерности
+    vecs = [v + [0.0] * (d - len(v)) for v in vecs]
+
+    # центрируем
+    centered = _sub_mean(vecs)
+
+    # первая компонента
+    pc1 = _power_iter(centered)
+    scores1 = [_dot(row, pc1) for row in centered]
+
+    # вычитаем проекцию на pc1
+    deflated = [
+        [centered[i][j] - scores1[i] * pc1[j] for j in range(d)]
+        for i in range(len(centered))
+    ]
+
+    # вторая компонента
+    if any(any(abs(x) > 1e-10 for x in row) for row in deflated):
+        pc2 = _power_iter(deflated)
+        scores2 = [_dot(row, pc2) for row in deflated]
+    else:
+        scores2 = [0.0] * len(ids)
+
+    return {nid: (scores1[i], scores2[i]) for i, nid in enumerate(ids)}
+
+
 @dataclass
 class KnowledgeMap:
     """
@@ -88,23 +156,14 @@ class KnowledgeMap:
                 edges = comm_edges,
             )
 
-            # 2D позиции через PCA-lite (первые 2 компоненты эмбеддинга)
-            positions_2d = {
-                n.id: (n.embedding[0] if len(n.embedding)>0 else 0.0,
-                       n.embedding[1] if len(n.embedding)>1 else 0.0)
-                for n in comm_nodes
-            }
+            # 2D позиции через PCA-lite (первые 2 главные компоненты, power iteration)
+            positions_2d = _pca2d({n.id: n.embedding for n in comm_nodes})
 
             community.build_all_signatures(node_2d_positions=positions_2d)
             self.add_community(community)
 
         # 4. Гиперрёбра
-        all_positions = {}
-        for node in self.nodes.values():
-            all_positions[node.id] = (
-                node.embedding[0] if len(node.embedding)>0 else 0.0,
-                node.embedding[1] if len(node.embedding)>1 else 0.0,
-            )
+        all_positions = _pca2d({n.id: n.embedding for n in self.nodes.values()})
         self.hyper_edges = build_hyper_edges(
             list(self.nodes.keys()), self.edges, all_positions
         )

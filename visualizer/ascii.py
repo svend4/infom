@@ -92,8 +92,9 @@ def render_communities(km: KnowledgeMap) -> str:
             bar    = "▓" if fd_avg > 1.5 else "░"
             fd_str = f" fd={fd_avg:.2f}{bar}"
 
+        arch_tag = f" \033[2m{comm.dominant_archetype}\033[0m" if comm.nodes else ""
         lines.append(
-            f"  {tag} {sstr} {scol}shape={shape.value if shape else '?':12s}{RESET}"
+            f"  {tag}{arch_tag} {sstr} {scol}shape={shape.value if shape else '?':12s}{RESET}"
             f" Q6={hid:2d}[{bits}] skel={skel:5s}{fd_str}"
             f"  [{nodes_str}]"
         )

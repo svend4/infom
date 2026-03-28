@@ -91,7 +91,12 @@ class MockLLMAdapter(LLMAdapter):
 
         parts = [intro_tmpl.format(topic=topic_short, desc=desc)]
         if rels_str and rels_str != "нет данных":
-            parts.append(conn_tmpl.format(rels=rels_str[:80]))
+            # обрезаем по целому отношению (не посередине)
+            rels_cut = rels_str
+            if len(rels_str) > 100:
+                idx = rels_str.rfind(";", 0, 100)
+                rels_cut = rels_str[:idx] if idx > 0 else rels_str[:100]
+            parts.append(conn_tmpl.format(rels=rels_cut))
         parts.append(close_tmpl.format(arch=arch_str, shape=shape_str))
 
         return " ".join(parts)
@@ -99,9 +104,20 @@ class MockLLMAdapter(LLMAdapter):
     def complete(self, prompt: str, **kwargs) -> LLMResponse:
         # Если промпт запрашивает извлечение сущностей (indexer) → JSON
         if '"entities"' in prompt or 'JSON с полями' in prompt or 'json' in prompt.lower()[:200]:
-            words = [w.strip('.,!?;:') for w in prompt.split()
+            # Извлекаем только из раздела "Текст:" если он есть
+            text_section = prompt
+            if 'Текст:' in prompt:
+                text_section = prompt.split('Текст:', 1)[1].strip()
+            elif 'текст:' in prompt.lower():
+                idx = prompt.lower().index('текст:')
+                text_section = prompt[idx + 6:].strip()
+            words = [w.strip('.,!?;:()"«»') for w in text_section.split()
                      if len(w) > 3 and w[0].isupper()]
             entities = list(dict.fromkeys(words))[:5]
+            if not entities:
+                # fallback: любые слова > 4 символов
+                words2 = [w.strip('.,!?;:') for w in text_section.split() if len(w) > 4]
+                entities = list(dict.fromkeys(words2))[:5]
             result = json.dumps({
                 "entities": [{"id": f"e{i}", "label": e, "type": "concept"}
                               for i, e in enumerate(entities)],

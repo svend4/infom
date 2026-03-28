@@ -285,9 +285,10 @@ class GraphRAGQuery:
     def _extract_relations(self, nodes: list) -> str:
         if not nodes:
             return "нет связей"
-        node_ids = {n.id for n in nodes}
+        node_ids  = {n.id for n in nodes}
+        id_to_lbl = {n.id: n.label for n in self.km.nodes.values()}
         rels = [
-            f"{e.source}→{e.target}: {e.label}"
+            f"{id_to_lbl.get(e.source, e.source)} —{e.label}→ {id_to_lbl.get(e.target, e.target)}"
             for e in self.km.edges
             if e.source in node_ids or e.target in node_ids
         ][:8]
