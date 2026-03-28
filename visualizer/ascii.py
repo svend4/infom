@@ -64,7 +64,9 @@ def render_communities(km: KnowledgeMap) -> str:
     if not km.communities:
         return "Сообществ нет."
 
-    lines = [f"{BOLD}Сообщества ({len(km.communities)}):{RESET}"]
+    lp_info = f"  {DIM}(Label Propagation: {km.lp_iterations} iter){RESET}" \
+              if km.lp_iterations else ""
+    lines = [f"{BOLD}Сообщества ({len(km.communities)}):{RESET}{lp_info}"]
     for i, comm in enumerate(km.communities.values()):
         cc   = COMMUNITY_COLORS[i % len(COMMUNITY_COLORS)]
         tag  = _color(f" {comm.id[-4:]} ", cc)
