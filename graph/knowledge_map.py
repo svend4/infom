@@ -90,6 +90,54 @@ def _pca2d(
     return {nid: (scores1[i], scores2[i]) for i, nid in enumerate(ids)}
 
 
+def _compute_modularity(km: "KnowledgeMap") -> float:
+    """
+    Модулярность Newman-Girvan Q ∈ (-0.5, 1.0).
+    Q > 0.3 — хорошее разбиение, Q > 0.5 — отличное.
+
+    Q = (1/2m) * Σ_ij [A_ij - k_i*k_j/(2m)] * δ(c_i, c_j)
+
+    A_ij  = вес ребра i→j
+    k_i   = сумма весов рёбер из i (degree)
+    m     = половина суммы всех весов
+    δ     = 1 если i и j в одном сообществе
+    """
+    if not km.edges or not km.communities:
+        return 0.0
+
+    # карта нода → сообщество
+    node_comm: dict[str, str] = {}
+    for comm in km.communities.values():
+        for n in comm.nodes:
+            node_comm[n.id] = comm.id
+
+    # строим взвешенный граф как словарь
+    adj: dict[str, dict[str, float]] = {nid: {} for nid in km.nodes}
+    m2 = 0.0
+    for e in km.edges:
+        w = e.weight
+        adj[e.source][e.target] = adj[e.source].get(e.target, 0.0) + w
+        adj[e.target][e.source] = adj[e.target].get(e.source, 0.0) + w
+        m2 += 2 * w
+
+    if m2 == 0.0:
+        return 0.0
+
+    # степени нод
+    degree = {nid: sum(adj[nid].values()) for nid in km.nodes}
+
+    Q = 0.0
+    for e in km.edges:
+        i, j, w = e.source, e.target, e.weight
+        if node_comm.get(i) == node_comm.get(j):
+            Q += w - degree[i] * degree[j] / m2
+        # обратное ребро
+        if node_comm.get(j) == node_comm.get(i):
+            Q += w - degree[j] * degree[i] / m2
+
+    return Q / m2
+
+
 def _label_propagation(km: "KnowledgeMap", max_iter: int = 20) -> None:
     """
     Label Propagation поверх Q6 Voronoi-разбиения.
@@ -184,11 +232,13 @@ class KnowledgeMap:
     """
     nodes:       dict[str, GraphNode]     = field(default_factory=dict)
     edges:       list[GraphEdge]          = field(default_factory=list)
-    hyper_edges: list[HyperEdge]          = field(default_factory=list)
-    communities: dict[str, Community]     = field(default_factory=dict)
-    borders:     list[CommunityBorder]    = field(default_factory=list)
-    metadata:    dict[str, Any]           = field(default_factory=dict)
-    lp_iterations: int                    = 0   # сколько итераций label propagation сошлось
+    hyper_edges:   list[HyperEdge]          = field(default_factory=list)
+    communities:   dict[str, Community]     = field(default_factory=dict)
+    borders:       list[CommunityBorder]    = field(default_factory=list)
+    metadata:      dict[str, Any]           = field(default_factory=dict)
+    lp_iterations: int                      = 0
+    modularity:    float                    = 0.0
+    pca_positions: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     # ── добавление данных ────────────────────────────────────────────────
 
@@ -253,8 +303,12 @@ class KnowledgeMap:
         # 3b. Label Propagation — рафинируем сообщества по топологии графа
         _label_propagation(self)
 
+        # 3c. Модулярность Q — качество разбиения на сообщества
+        self.modularity = _compute_modularity(self)
+
         # 4. Гиперрёбра
         all_positions = _pca2d({n.id: n.embedding for n in self.nodes.values()})
+        self.pca_positions = all_positions   # сохраняем для ASCII/HTML
         self.hyper_edges = build_hyper_edges(
             list(self.nodes.keys()), self.edges, all_positions
         )
