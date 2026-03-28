@@ -164,6 +164,62 @@ def demo_document():
     print(km.summary())
 
 
+def demo_rag():
+    """Демо 3: HNSW поиск + GraphRAG query."""
+    from search.hnsw import HNSWSearch
+    pipeline = InfoMPipeline(config=IndexConfig(n_communities=4))
+
+    nodes_data = [
+        ("n1",  "Алгоритм",        [ 0.9,  0.8,  0.7, -0.5, -0.6,  0.8], "ADEO"),
+        ("n2",  "Нейросеть",       [ 0.8,  0.9,  0.8,  0.6, -0.7,  0.7], "ADCO"),
+        ("n3",  "Компилятор",      [-0.2,  0.7,  0.9,  0.8, -0.5,  0.9], "ADCO"),
+        ("n4",  "Метро",           [ 0.8,  0.7,  0.6, -0.4,  0.8, -0.3], "MDCO"),
+        ("n5",  "Транспорт",       [ 0.7,  0.8, -0.3, -0.6,  0.9, -0.5], "MDEO"),
+        ("n6",  "Инфраструктура",  [ 0.9, -0.2,  0.8,  0.7,  0.6, -0.4], "MSCO"),
+        ("n7",  "Физика",          [-0.8, -0.7,  0.8,  0.9, -0.3,  0.6], "ASCO"),
+        ("n8",  "Математика",      [-0.9, -0.8, -0.2,  0.8, -0.4,  0.9], "ASEO"),
+        ("n9",  "Термодинамика",   [-0.7, -0.6,  0.7,  0.8, -0.2, -0.3], "ASCO"),
+        ("n10", "Клетка",          [ 0.7,  0.6, -0.5, -0.7, -0.8, -0.6], "MDEF"),
+        ("n11", "ДНК",             [ 0.8, -0.3, -0.6,  0.6, -0.7, -0.5], "MSEO"),
+        ("n12", "Экосистема",      [ 0.9, -0.4,  0.7, -0.5, -0.6, -0.7], "MSCF"),
+    ]
+    for nid, label, emb, arch in nodes_data:
+        pipeline.add_node(nid, label, emb, arch)
+    for src, tgt, lbl, w in [
+        ("n1","n2","основа",0.9),("n2","n3","компилируется",0.7),
+        ("n1","n3","реализуется",0.8),("n4","n5","использует",0.9),
+        ("n5","n6","часть",0.8),("n4","n6","включает",0.7),
+        ("n7","n8","формализует",0.9),("n8","n9","применяется",0.8),
+        ("n7","n9","объясняет",0.9),("n10","n11","содержит",0.9),
+        ("n11","n12","формирует",0.7),("n10","n12","часть",0.8),
+        ("n1","n7","изучает",0.5),("n2","n10","моделирует",0.4),("n6","n4","обслуживает",0.6),
+    ]:
+        pipeline.add_edge(src, tgt, lbl, w)
+    pipeline.build()
+
+    # HNSW поиск
+    print("\n" + "="*60)
+    print("HNSW поиск (запрос близко к 'Алгоритм')")
+    print("="*60)
+    query_emb = [0.85, 0.75, 0.65, -0.45, -0.55, 0.75]
+    result = pipeline.search_hnsw(query_emb, radius=2)
+    print(result.summary())
+
+    # GraphRAG local
+    print("\n" + "="*60)
+    print("GraphRAG LOCAL: 'Что такое нейросеть?'")
+    print("="*60)
+    ans = pipeline.rag_query("Что такое нейросеть?", mode="local")
+    print(ans.display())
+
+    # GraphRAG global
+    print("\n" + "="*60)
+    print("GraphRAG GLOBAL: 'Какие темы охватывает граф?'")
+    print("="*60)
+    ans2 = pipeline.rag_query("Какие темы охватывает граф?", mode="global")
+    print(ans2.display())
+
+
 def demo_visualize():
     """Демо 3: визуализация — ASCII + HTML."""
     import os
@@ -215,3 +271,5 @@ def demo_visualize():
 
 if __name__ == "__main__":
     demo_visualize()
+    demo_rag()
+    demo_document()

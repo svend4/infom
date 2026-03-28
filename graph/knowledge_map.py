@@ -205,38 +205,60 @@ def _build_border(ca: Community, cb: Community) -> CommunityBorder:
 def _boundary_curve(
     ca: Community,
     cb: Community,
-    n_points: int = 16,
+    n_points: int = 48,
 ) -> list[tuple[float, float]]:
     """
-    Приближённая граничная кривая между двумя сообществами.
-    Строится как синусоидальное возмущение прямой линии между центрами.
+    Фрактальная граничная кривая между двумя сообществами.
+    Сложность кривой зависит от:
+      - Q6 Hamming distance (геометрическая дальность)
+      - числа cross-edges (семантическая связанность)
+    Используется многочастотное возмущение для нетривиального fd_box.
     """
     ea = ca.center_embedding
     eb = cb.center_embedding
     if not ea or not eb:
-        return [(float(i), 0.0) for i in range(n_points)]
+        return [(float(i) / (n_points - 1), 0.0) for i in range(n_points)]
 
     x0 = ea[0] if len(ea) > 0 else 0.0
     y0 = ea[1] if len(ea) > 1 else 0.0
     x1 = eb[0] if len(eb) > 0 else 1.0
     y1 = eb[1] if len(eb) > 1 else 0.0
 
-    # добавляем фрактальное возмущение на основе Q6-расстояния
-    hd = hamming(ca.hex_id, cb.hex_id)
-    amp = hd * 0.05  # амплитуда = Q6 расстояние
+    hd         = hamming(ca.hex_id, cb.hex_id)  # 1-6
+    n_cross    = len(_shared_neighbors(ca, cb))  # общие ноды
+    complexity = hd / 6.0 + n_cross * 0.15      # 0..1+
+
+    # амплитуда базовая + бонус за сложность
+    base_amp = 0.15 + complexity * 0.25
+
+    dx = x1 - x0
+    dy = y1 - y0
+    length = math.hypot(dx, dy) or 1.0
+    # перпендикулярный единичный вектор
+    px = -dy / length
+    py =  dx / length
+
+    # детерминированный seed из id сообществ
+    seed = sum(ord(c) for c in ca.id + cb.id)
 
     curve = []
     for i in range(n_points):
-        t    = i / (n_points - 1)
-        x    = x0 + t * (x1 - x0)
-        y    = y0 + t * (y1 - y0)
-        # перпендикулярное смещение
-        perp_x = -(y1 - y0)
-        perp_y =  (x1 - x0)
-        norm   = math.hypot(perp_x, perp_y) or 1.0
-        noise  = amp * math.sin(math.pi * t * hd)
-        x     += noise * perp_x / norm
-        y     += noise * perp_y / norm
+        t = i / (n_points - 1)
+        x = x0 + t * dx
+        y = y0 + t * dy
+
+        # многочастотное возмущение — фрактальный суммарный шум
+        noise = 0.0
+        for harmonic in range(1, 5):
+            freq  = harmonic * (1 + hd)
+            phase = (seed * harmonic * 0.37) % (2 * math.pi)
+            amp_h = base_amp / harmonic          # 1/f спектр
+            noise += amp_h * math.sin(math.pi * t * freq + phase)
+
+        # масштабируем на длину базовой линии
+        noise *= length
+        x += noise * px
+        y += noise * py
         curve.append((x, y))
 
     return curve

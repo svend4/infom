@@ -21,35 +21,53 @@ class FractalSignature:
 # ── Box-counting ────────────────────────────────────────────────────────────
 
 def box_counting_dimension(curve: list[tuple[float, float]],
-                           n_scales: int = 8) -> float:
+                           n_scales: int = 12) -> float:
     """
     Фрактальная размерность методом ячеек.
-    Считаем сколько ячеек размера ε покрывает кривую при разных ε.
+    fd ≈ 1.0 для прямой линии, 1.5+ для извилистых кривых, →2.0 для заполняющих.
+
+    Фикс: отбрасываем насыщенные масштабы (N_boxes ≈ N_points)
+    и слишком крупные (N_boxes < 3), используем только линейный участок.
     """
-    if len(curve) < 2:
+    if len(curve) < 4:
         return 1.0
 
     xs = [p[0] for p in curve]
     ys = [p[1] for p in curve]
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
-    span = max(x_max - x_min, y_max - y_min, 1e-10)
+    # нормализуем в единичный квадрат для устойчивости
+    sx = x_max - x_min or 1e-10
+    sy = y_max - y_min or 1e-10
 
+    n_pts  = len(curve)
     counts, epsilons = [], []
+
     for k in range(1, n_scales + 1):
-        eps = span / (2 ** k)
-        boxes = set()
+        eps = 1.0 / (2 ** k)          # ε в нормализованных координатах
+        boxes: set[tuple[int,int]] = set()
         for p in curve:
-            bx = int((p[0] - x_min) / eps)
-            by = int((p[1] - y_min) / eps)
+            bx = int((p[0] - x_min) / sx / eps)
+            by = int((p[1] - y_min) / sy / eps)
             boxes.add((bx, by))
-        if boxes:
-            counts.append(math.log(len(boxes)))
-            epsilons.append(math.log(1.0 / eps))
+        n_boxes = len(boxes)
+        # пропускаем крайние масштабы (слишком мало или почти насыщено)
+        if n_boxes < 3:
+            continue
+        if n_boxes >= n_pts * 0.95:
+            continue
+        counts.append(math.log(n_boxes))
+        epsilons.append(math.log(1.0 / eps))
 
     if len(counts) < 2:
-        return 1.0
-    return _linear_regression_slope(epsilons, counts)
+        # запасной вариант: оценка через arc-length / bbox
+        arc = sum(math.hypot(curve[i+1][0]-curve[i][0],
+                             curve[i+1][1]-curve[i][1])
+                  for i in range(len(curve)-1))
+        bbox = math.hypot(sx, sy) or 1.0
+        return 1.0 + min(0.9, math.log(arc / bbox + 1) * 0.4)
+
+    return max(1.0, min(2.0, _linear_regression_slope(epsilons, counts)))
 
 
 def _linear_regression_slope(xs: list[float], ys: list[float]) -> float:
@@ -66,9 +84,19 @@ def _linear_regression_slope(xs: list[float], ys: list[float]) -> float:
 # ── Divider / Richardson ────────────────────────────────────────────────────
 
 def divider_dimension(curve: list[tuple[float, float]],
-                      n_steps: int = 8) -> float:
-    """Фрактальная размерность методом циркуля (Richardson)."""
-    if len(curve) < 2:
+                      n_steps: int = 10) -> float:
+    """
+    Фрактальная размерность методом циркуля (Richardson).
+    fd ≈ 1.0 для прямой, растёт для извилистых кривых.
+    """
+    if len(curve) < 4:
+        return 1.0
+
+    # полная длина дуги
+    arc_len = sum(math.hypot(curve[i+1][0]-curve[i][0],
+                             curve[i+1][1]-curve[i][1])
+                  for i in range(len(curve)-1))
+    if arc_len < 1e-10:
         return 1.0
 
     span = max(
@@ -80,14 +108,18 @@ def divider_dimension(curve: list[tuple[float, float]],
     counts, epsilons = [], []
     for k in range(1, n_steps + 1):
         step = span / (2 ** k)
+        if step < 1e-10:
+            continue
         count = _count_divider_steps(curve, step)
-        if count > 0:
-            counts.append(math.log(count))
-            epsilons.append(math.log(1.0 / step))
+        # пропускаем слишком мало шагов (1-2) и насыщение
+        if count < 3:
+            continue
+        counts.append(math.log(count))
+        epsilons.append(math.log(1.0 / step))
 
     if len(counts) < 2:
-        return 1.0
-    return _linear_regression_slope(epsilons, counts)
+        return 1.0 + min(0.5, arc_len / span - 1.0) if span > 0 else 1.0
+    return max(1.0, min(2.0, _linear_regression_slope(epsilons, counts)))
 
 
 def _count_divider_steps(curve: list[tuple[float, float]], step: float) -> int:

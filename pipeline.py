@@ -28,8 +28,10 @@ from search         import (
     cluster_search_by_shape, similar_clusters,
     boundary_search,
     radial_search,
+    HNSWSearch,
 )
 from signatures     import ShapeClass
+from llm_adapter    import LLMAdapter, MockLLMAdapter
 
 
 @dataclass
@@ -64,10 +66,16 @@ class InfoMPipeline:
         print(result.summary)
     """
 
-    def __init__(self, config: IndexConfig | None = None):
+    def __init__(
+        self,
+        config: IndexConfig | None = None,
+        llm:    LLMAdapter  | None = None,
+    ):
         self.config   = config or IndexConfig()
         self.km       = KnowledgeMap()
         self.expander = QueryExpander()
+        self.llm      = llm or MockLLMAdapter()
+        self._rag: "GraphRAGQuery | None" = None  # lazy init
 
     # ── индексация ────────────────────────────────────────────────────────
 
@@ -163,6 +171,20 @@ class InfoMPipeline:
     def search_radial(self, community_id: str, radius: int = 1):
         """Радиальный поиск в Q6 (Hamming ball)."""
         return radial_search(self.km, community_id, radius)
+
+    def search_hnsw(self, query_embedding: list[float], radius: int = 2):
+        """Двухэтапный HNSW поиск: Hamming ball → geometric rerank."""
+        return HNSWSearch(self.km, stage1_radius=radius).search(query_embedding)
+
+    def rag_query(self, text: str, mode: str = "hybrid") -> "GraphRAGAnswer":
+        """
+        Полный GraphRAG запрос: HNSW retrieve → LLM generate.
+        mode: "local" | "global" | "hybrid"
+        """
+        from graphrag_query import GraphRAGQuery, GraphRAGAnswer
+        if self._rag is None:
+            self._rag = GraphRAGQuery(self.km, llm=self.llm)
+        return self._rag.query(text, mode=mode)
 
     def map_summary(self) -> str:
         return self.km.summary()
