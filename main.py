@@ -280,7 +280,25 @@ def demo_visualize():
     print("Откройте в браузере для интерактивного просмотра.")
 
 
+def demo_benchmark():
+    """Демо 4: бенчмарк Multi-Projection Q6 recall."""
+    from search.benchmark import run_recall_benchmark, format_benchmark
+    print("\n" + "="*60)
+    print("DEMO 3: Multi-Projection Q6 — Recall Benchmark")
+    print("="*60)
+    print("500 случайных 6D векторов, top-10 ближайших соседей\n")
+
+    print("radius=2 (HNSW default):")
+    r2 = run_recall_benchmark(n_vectors=500, radius=2, top_k=10)
+    print(format_benchmark(r2))
+
+    print("\nradius=1 (быстрее, но меньше recall):")
+    r1 = run_recall_benchmark(n_vectors=500, radius=1, top_k=10)
+    print(format_benchmark(r1))
+
+
 if __name__ == "__main__":
     demo_visualize()
     demo_rag()
     demo_document()
+    demo_benchmark()
