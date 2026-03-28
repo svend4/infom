@@ -1,0 +1,21 @@
+# Fly.io — бесплатный деплой (3 shared-cpu VM бесплатно)
+# Команды:
+#   fly launch   (первый раз)
+#   fly deploy   (обновление)
+#   fly secrets set GROQ_API_KEY=gsk-...
+
+app = "infom-api"
+primary_region = "fra"   # Frankfurt — ближайший к Дрездену
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  force_https   = true
+  auto_stop_machines  = true    # экономия — выключается при неактивности
+  auto_start_machines = true
+
+[[vm]]
+  size = "shared-cpu-1x"    # бесплатный тир
+  memory = "256mb"

@@ -1,0 +1,24 @@
+# Render.com — бесплатный деплой (750 часов/месяц)
+# Документация: https://render.com/docs
+# Подключи репо svend4/infom в Render Dashboard
+
+services:
+  - type: web
+    name: infom-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt fastapi uvicorn
+    startCommand: python infom_api.py
+    plan: free          # бесплатный тир (засыпает после 15 мин неактивности)
+    envVars:
+      - key: INFOM_PROVIDER
+        value: groq        # или openrouter / cohere
+      - key: GROQ_API_KEY
+        sync: false        # задай вручную в Dashboard
+      - key: JINA_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: PORT
+        value: 8000
+      - key: PYTHONUNBUFFERED
+        value: "1"

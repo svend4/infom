@@ -93,7 +93,8 @@ def _load_snapshot() -> bool:
         km = KnowledgeMap()
         llm = _get_llm()
         for nd in data.get("nodes", []):
-            emb = nd.get("embedding") or llm.embed(nd["label"])
+            raw_emb = nd.get("embedding")
+            emb = raw_emb if raw_emb else llm.embed(nd["label"])
             node = GraphNode(
                 id=nd["id"],
                 label=nd["label"],
@@ -103,7 +104,19 @@ def _load_snapshot() -> bool:
                 metadata=nd.get("metadata", {}),
             )
             km.add_node(node)
+
+        # Нормализуем размерность эмбеддингов: все к max_dim (padding нулями)
+        all_dims = [len(n.embedding) for n in km.nodes.values() if n.embedding]
+        if all_dims:
+            max_dim = max(all_dims)
+            for n in km.nodes.values():
+                if len(n.embedding) < max_dim:
+                    n.embedding = list(n.embedding) + [0.0] * (max_dim - len(n.embedding))
+
         for ed in data.get("edges", []):
+            # пропускаем рёбра с отсутствующими нодами
+            if ed["source"] not in km.nodes or ed["target"] not in km.nodes:
+                continue
             edge = GraphEdge(
                 source=ed["source"],
                 target=ed["target"],
