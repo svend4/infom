@@ -167,6 +167,23 @@ class InfoMPipeline:
     def map_summary(self) -> str:
         return self.km.summary()
 
+    # ── визуализация ─────────────────────────────────────────────────────
+
+    def visualize(self, mode: str = "ascii", output: str = "infom_graph.html") -> str:
+        """
+        Визуализировать граф знаний.
+
+        mode="ascii"  — цветной вывод в терминал
+        mode="html"   — интерактивный HTML (D3.js), сохраняет файл
+        """
+        if mode == "html":
+            from visualizer import render_html
+            path = render_html(self.km, output)
+            return f"HTML сохранён: {path}"
+        else:
+            from visualizer import render_full
+            return render_full(self.km)
+
     # ── визуализация (текстовая) ──────────────────────────────────────────
 
     def _format_summary(self, result: QueryResult) -> str:
