@@ -170,13 +170,17 @@ def is_perfect_code(centers: list[int], radius: int) -> bool:
 
 def embed_to_q6(embedding: list[float]) -> int:
     """
-    Проецирует непрерывный embedding в Q6 через бинаризацию по медиане.
-    Берёт первые 6 компонент, каждую бинаризует относительно 0.
+    Проецирует непрерывный embedding в Q6 через бинаризацию по среднему.
+    Берёт первые 6 компонент; бит=1 если значение ВЫШЕ среднего по вектору.
+    Это гарантирует что ~половина битов будет 1, даже если все значения >= 0.
     """
-    bits = []
-    for i in range(N_DIMS):
-        val = embedding[i] if i < len(embedding) else 0.0
-        bits.append(1 if val >= 0.0 else 0)
+    vals = [embedding[i] if i < len(embedding) else 0.0 for i in range(N_DIMS)]
+    mean = sum(vals) / N_DIMS
+    # если вектор константный — используем sign(val - 0.5) как запасной вариант
+    if all(abs(v - mean) < 1e-10 for v in vals):
+        bits = [1 if v > 0.5 else 0 for v in vals]
+    else:
+        bits = [1 if v > mean else 0 for v in vals]
     return from_bits(tuple(bits))
 
 

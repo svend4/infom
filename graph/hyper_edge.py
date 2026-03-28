@@ -59,54 +59,64 @@ class HyperEdge:
 
 
 def build_hyper_edges(
-    nodes:           list[str],
-    edges:           list[GraphEdge],
-    node_positions:  dict[str, tuple[float, float]],
+    nodes:            list[str],
+    edges:            list[GraphEdge],
+    node_positions:   dict[str, tuple[float, float]],
     min_cluster_size: int = 3,
 ) -> list[HyperEdge]:
     """
-    Автоматически строит гиперрёбра из набора рёбер через поиск клик.
-    Простая реализация через пересечение соседей.
+    Строит гиперрёбра из связных компонент (плотных подграфов).
+    Алгоритм: для каждой ноды берём её ego-граф глубины 1,
+    если он >= min_cluster_size — создаём гиперребро.
     """
-    # строим словарь смежности
+    # двунаправленный словарь смежности
     adj: dict[str, set[str]] = {n: set() for n in nodes}
     for e in edges:
         adj[e.source].add(e.target)
-        if not e.directed:
-            adj[e.target].add(e.source)
+        adj[e.target].add(e.source)   # всегда двунаправленный для кластеризации
 
-    # ищем группы взаимосвязанных нод (cliques / dense subgraphs)
-    hyper_edges = []
-    visited     = set()
+    hyper_edges: list[HyperEdge] = []
+    used_clusters: list[frozenset] = []   # дедупликация
 
     for node in nodes:
-        if node in visited:
+        # ego-граф: нода + все её соседи
+        ego = {node} | adj[node]
+
+        # ограничиваем сверху 8 (octagram)
+        if len(ego) > 8:
+            # берём топ-8 по числу общих связей с node
+            ranked = sorted(adj[node],
+                            key=lambda nb: len(adj[node] & adj[nb]),
+                            reverse=True)
+            ego = {node} | set(ranked[:7])
+
+        if len(ego) < min_cluster_size:
             continue
-        # BFS с ограничением по радиусу
-        cluster    = {node}
-        frontier   = list(adj[node])
-        for nb in frontier:
-            shared = adj[node] & adj[nb]
-            if len(shared) >= min_cluster_size - 2:
-                cluster.add(nb)
-            if len(cluster) >= 8:   # max octagram
-                break
 
-        if len(cluster) >= min_cluster_size:
-            cluster_list = list(cluster)
-            positions    = [node_positions.get(n, (0.0, 0.0)) for n in cluster_list]
-            edge_w       = [(e.source, e.target, e.weight)
-                            for e in edges
-                            if e.source in cluster and e.target in cluster]
+        cluster = frozenset(ego)
 
-            he = HyperEdge(
-                id    = f"he_{node}",
-                nodes = cluster_list,
-                label = _label_by_size(len(cluster_list)),
-            )
-            he.build_signatures(positions, edge_w)
-            hyper_edges.append(he)
-            visited.update(cluster)
+        # пропускаем если уже есть почти идентичный кластер (>80% overlap)
+        duplicate = any(
+            len(cluster & existing) / max(len(cluster), len(existing)) > 0.8
+            for existing in used_clusters
+        )
+        if duplicate:
+            continue
+
+        used_clusters.append(cluster)
+        cluster_list = list(cluster)
+        positions    = [node_positions.get(n, (0.0, 0.0)) for n in cluster_list]
+        edge_w       = [(e.source, e.target, e.weight)
+                        for e in edges
+                        if e.source in cluster and e.target in cluster]
+
+        he = HyperEdge(
+            id    = f"he_{node}",
+            nodes = cluster_list,
+            label = _label_by_size(len(cluster_list)),
+        )
+        he.build_signatures(positions, edge_w)
+        hyper_edges.append(he)
 
     return hyper_edges
 
