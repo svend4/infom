@@ -120,7 +120,7 @@ class GraphRAGQuery:
 
     def _local_query(self, query: str, query_emb: list[float]) -> GraphRAGAnswer:
         """Поиск вокруг наиболее релевантной ноды."""
-        hnsw_result = self.hnsw.search(query_emb)
+        hnsw_result = self.hnsw.search(query_emb, query_text=query)
 
         # собираем ноды из топ-результатов
         top_nodes = [
@@ -192,11 +192,20 @@ class GraphRAGQuery:
         all_sources    = []
 
         for comm in self.km.communities.values():
+            if not comm.nodes:
+                continue
             nodes_str = ", ".join(n.label for n in comm.nodes[:5])
-            shape     = comm.tangram.shape_class.value if comm.tangram else "?"
-            fd        = comm.fractal.fd_box if comm.fractal else 1.0
-            summary   = (f"[{shape}] Q6={comm.hex_id}: {nodes_str} "
-                        f"(fd_boundary={fd:.2f})")
+            if len(comm.nodes) > 5:
+                nodes_str += f" +{len(comm.nodes)-5}"
+            shape  = comm.tangram.shape_class.value if comm.tangram else "?"
+            arch   = comm.dominant_archetype
+            skel   = comm.octagram.skeleton_type.value[:5] if comm.octagram else "?"
+            hd_dim = (comm.heptagram.dominant_ray.label
+                      if comm.heptagram else "?")
+            summary = (
+                f"[{shape}/{arch}] Q6={comm.hex_id} skel={skel} "
+                f"dom={hd_dim}: {nodes_str}"
+            )
             comm_summaries.append(summary)
             all_sources.extend(n.label for n in comm.nodes[:3])
 

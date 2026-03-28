@@ -138,20 +138,51 @@ class HNSWSearch:
 
     # ── Этап 2: точный reranking по геометрической сигнатуре ─────────────────
 
-    def _score_community(
-        self, comm: Community, query_vec: list[float]
+    # архетипы по ключевым словам домена (для буста)
+    _DOMAIN_ARCH = {
+        "technology": {"ADCO", "ADEO", "MDCO"},
+        "science":    {"ASCO", "ASEO", "ADEO"},
+        "biology":    {"MDEF", "MSCF", "MSEO"},
+        "urbanism":   {"MDCF", "MSCO", "MDCO"},
+    }
+
+    def _archetype_boost(
+        self, comm: Community, query: str
     ) -> float:
-        """Полная geometric similarity: signature_vector cosine + Q6 bonus."""
+        """
+        Буст сообщества если его доминирующий архетип совпадает с доменом запроса.
+        Возвращает 0.0..0.15 (скромная добавка, не перебивает geometric score).
+        """
+        q = query.lower()
+        dom_arch = comm.dominant_archetype
+        for domain, archs in self._DOMAIN_ARCH.items():
+            # простая проверка по ключевым словам (без импорта QueryExpander)
+            kws = {
+                "technology": ["алгоритм","нейросет","компил","программ","код","систем"],
+                "science":    ["физик","математ","термо","теори","закон","наук"],
+                "biology":    ["клетк","днк","ген","организм","экосис","биол"],
+                "urbanism":   ["метро","транспорт","инфраструктур","город","улиц"],
+            }
+            if any(kw in q for kw in kws.get(domain, [])):
+                if dom_arch in archs:
+                    return 0.15
+                break
+        return 0.0
+
+    def _score_community(
+        self, comm: Community, query_vec: list[float], query_text: str = ""
+    ) -> float:
+        """Geometric similarity: signature_vector cosine + архетип-буст."""
         if not comm.signature_vector():
             return 0.0
         cv = comm.signature_vector()
-        # косинусная схожесть
         n  = min(len(query_vec), len(cv))
-        dot   = sum(query_vec[i] * cv[i] for i in range(n))
+        dot    = sum(query_vec[i] * cv[i] for i in range(n))
         norm_q = math.sqrt(sum(x*x for x in query_vec[:n])) or 1.0
         norm_c = math.sqrt(sum(x*x for x in cv[:n]))        or 1.0
-        cosine = (dot / (norm_q * norm_c) + 1.0) / 2.0   # [0,1]
-        return cosine
+        cosine = (dot / (norm_q * norm_c) + 1.0) / 2.0
+        boost  = self._archetype_boost(comm, query_text) if query_text else 0.0
+        return min(1.0, cosine + boost)
 
     def _score_node(
         self, node: GraphNode, query_emb: list[float]
@@ -194,6 +225,7 @@ class HNSWSearch:
         query_ifs:       list[float] | None = None,
         include_nodes:   bool = True,
         include_hypers:  bool = True,
+        query_text:      str  = "",
     ) -> HNSWResult:
         """
         Двухэтапный поиск:
@@ -220,7 +252,7 @@ class HNSWSearch:
         for comm in stage1_comms:
             hd    = self.multi_lsh.min_distance(query_embedding, [0.0] * 6)
             hd    = hamming(query_hex, comm.hex_id)   # single-proj distance
-            score = self._score_community(comm, query_vec)
+            score = self._score_community(comm, query_vec, query_text)
             # Q6-бонус: coverage = доля проекций подтверждающих близость
             cov      = coverage.get(comm.id, 0.0)
             q6_bonus = (1.0 - hd / 7.0) * 0.7 + cov * 0.3

@@ -90,6 +90,93 @@ def _pca2d(
     return {nid: (scores1[i], scores2[i]) for i, nid in enumerate(ids)}
 
 
+def _label_propagation(km: "KnowledgeMap", max_iter: int = 20) -> None:
+    """
+    Label Propagation поверх Q6 Voronoi-разбиения.
+
+    Рафинирует принадлежность нод к сообществам по топологии графа:
+    каждая нода итеративно «голосует» за сообщество своих соседей
+    (взвешено по силе ребра). Нода переходит в новое сообщество,
+    если соседи «голосуют» за другое сообщество сильнее, чем за текущее.
+
+    Это устраняет ситуацию когда Q6 кладёт семантически далёкие ноды
+    вместе только потому что у них совпал хеш.
+    """
+    if not km.edges:
+        return
+
+    # индекс: node_id → community_id
+    node_to_comm: dict[str, str] = {}
+    for comm in km.communities.values():
+        for n in comm.nodes:
+            node_to_comm[n.id] = comm.id
+
+    # adjacency: node_id → list[(neighbor_id, weight)]
+    adj: dict[str, list[tuple[str, float]]] = {nid: [] for nid in km.nodes}
+    for e in km.edges:
+        adj[e.source].append((e.target, e.weight))
+        adj[e.target].append((e.source, e.weight))
+
+    iters = 0
+    import random
+    rng = random.Random(42)
+
+    for it in range(max_iter):
+        changed = 0
+        order = list(km.nodes.keys())
+        rng.shuffle(order)
+
+        for nid in order:
+            nbrs = adj.get(nid, [])
+            if not nbrs:
+                continue
+            votes: dict[str, float] = {}
+            curr = node_to_comm[nid]
+            # self-vote: сильный вес для стабильности (требует явного большинства чтобы переехать)
+            votes[curr] = 1.0
+            for nb_id, w in nbrs:
+                nb_comm = node_to_comm.get(nb_id)
+                if nb_comm:
+                    votes[nb_comm] = votes.get(nb_comm, 0.0) + w
+            best = max(votes, key=votes.__getitem__)
+            # переезжаем только если чужое сообщество ЗНАЧИТЕЛЬНО сильнее (порог 1.5×)
+            if best != curr and votes[best] > votes.get(curr, 0.0) * 1.5:
+                node_to_comm[nid] = best
+                changed += 1
+
+        iters += 1
+        if changed == 0:
+            break
+
+    km.lp_iterations = iters
+
+    # перестраиваем сообщества по новым меткам
+    new_groups: dict[str, list] = {}
+    for nid, cid in node_to_comm.items():
+        new_groups.setdefault(cid, []).append(km.nodes[nid])
+
+    to_delete = []
+    for cid, comm in list(km.communities.items()):
+        new_nodes = new_groups.get(cid, [])
+        if not new_nodes:
+            to_delete.append(cid)
+            continue
+        if [n.id for n in new_nodes] == [n.id for n in comm.nodes]:
+            continue   # без изменений
+        comm.nodes = new_nodes
+        comm.edges = [
+            e for e in km.edges
+            if e.source in {n.id for n in new_nodes}
+            and e.target in {n.id for n in new_nodes}
+        ]
+        positions_2d = _pca2d({n.id: n.embedding for n in new_nodes})
+        comm.build_all_signatures(node_2d_positions=positions_2d)
+
+    # удаляем пустые сообщества
+    for cid in to_delete:
+        del km.communities[cid]
+
+
 @dataclass
 class KnowledgeMap:
     """
@@ -101,6 +188,7 @@ class KnowledgeMap:
     communities: dict[str, Community]     = field(default_factory=dict)
     borders:     list[CommunityBorder]    = field(default_factory=list)
     metadata:    dict[str, Any]           = field(default_factory=dict)
+    lp_iterations: int                    = 0   # сколько итераций label propagation сошлось
 
     # ── добавление данных ────────────────────────────────────────────────
 
@@ -161,6 +249,9 @@ class KnowledgeMap:
 
             community.build_all_signatures(node_2d_positions=positions_2d)
             self.add_community(community)
+
+        # 3b. Label Propagation — рафинируем сообщества по топологии графа
+        _label_propagation(self)
 
         # 4. Гиперрёбра
         all_positions = _pca2d({n.id: n.embedding for n in self.nodes.values()})
