@@ -2,10 +2,17 @@
 SemanticSimulator — симуляция реального LLM+embedding адаптера.
 
 Вместо случайных хэшей (MockLLMAdapter) здесь:
-  1. SemanticEmbedder  — 6D векторы с реальной семантической геометрией.
-     Оси: [вычислительность, абстрактность, динамичность,
-           системность, дискретность, детерминированность]
-     Похожие понятия → близкие векторы → правильная кластеризация.
+  1. SemanticEmbedder  — 32D векторы с реальной семантической геометрией.
+     Оси 0-5 (ядро): [вычислительность, теоретичность, динамичность,
+                       системность, дискретность, детерминизм]
+     Оси 6-11 (ML/AI): [нейросетевость, seq2seq, эмбеддинг, обучение, поиск, генерация]
+     Оси 12-17 (биол): [клеточность, ДНК/генетика, экосистемность, эволюционность,
+                         метаболизм, нейробиология]
+     Оси 18-23 (инфра): [транспорт, сеть, распред, поток, маршрут, физ.объект]
+     Оси 24-29 (math):  [алгебра, анализ, геометрия, статистика, топология, граф-теория]
+     Оси 30-31 (мета):  [сложность, временность]
+     Похожие понятия → близкие векторы → правильная кластеризация Q6.
+     Q6 проекция: average-pool 32→6 (не первые 6 элементов, а все равноценно).
 
   2. SemanticLLM       — синтез ответов: читает контекст графа и
      строит связный ответ из реальных сущностей и связей.
@@ -23,103 +30,189 @@ import re
 from llm_adapter import LLMAdapter, LLMResponse
 
 
-# ── 1. Семантические оси ──────────────────────────────────────────────────────
+# ── 1. Семантические оси (32D) ────────────────────────────────────────────────
 #
-#  dim 0: вычислительность  (-1 = гуманитарное/биол,  +1 = алгоритм/код)
-#  dim 1: теоретичность     (-1 = прикладное,         +1 = чистая теория)
-#  dim 2: динамичность      (-1 = статичная структура, +1 = процесс/поток)
-#  dim 3: системность       (-1 = атомарная сущность,  +1 = экосистема/сеть)
-#  dim 4: дискретность      (-1 = непрерывное/аналог,  +1 = дискретное/цифровое)
-#  dim 5: детерминизм       (-1 = вероятностное/хаос,  +1 = детерминированное)
+# ЯДРО (0-5):   comp  theory  dynamic  system  discrete  determin
+# ML/AI  (6-11): neural  seq2seq  embedding  learning  retrieval  generation
+# БИОЛ  (12-17): cell  dna  ecosystem  evolution  metabolism  neurobio
+# ИНФРА (18-23): transport  network  distributed  flow  routing  physical
+# MATH  (24-29): algebra  calculus  geometry  statistics  topology  graph_theory
+# МЕТА  (30-31): complexity  temporal
 #
-# Формат: [comp, theory, dynamic, system, discrete, determin]
 # Нормировка: каждый вектор единичной длины при хранении
+
+def _v32(
+    comp=0.0, theory=0.0, dynamic=0.0, system=0.0, discrete=0.0, determin=0.0,
+    neural=0.0, seq2seq=0.0, embedding=0.0, learning=0.0, retrieval=0.0, generation=0.0,
+    cell=0.0, dna=0.0, ecosystem=0.0, evolution=0.0, metabolism=0.0, neurobio=0.0,
+    transport=0.0, network=0.0, distributed=0.0, flow=0.0, routing=0.0, physical=0.0,
+    algebra=0.0, calculus=0.0, geometry=0.0, statistics=0.0, topology=0.0, graph_theory=0.0,
+    complexity=0.0, temporal=0.0,
+) -> list[float]:
+    return [comp, theory, dynamic, system, discrete, determin,
+            neural, seq2seq, embedding, learning, retrieval, generation,
+            cell, dna, ecosystem, evolution, metabolism, neurobio,
+            transport, network, distributed, flow, routing, physical,
+            algebra, calculus, geometry, statistics, topology, graph_theory,
+            complexity, temporal]
+
 
 _SEMANTIC_VOCAB: dict[str, list[float]] = {
     # ── Математика / Физика ──────────────────────────────────────────────────
-    "математика":        [ 0.3,  0.9,  0.1,  0.2,  0.4,  0.9],
-    "физика":            [ 0.2,  0.8,  0.4,  0.3,  0.2,  0.7],
-    "термодинамика":     [ 0.1,  0.7,  0.8,  0.3,  0.1,  0.6],
-    "механика":          [ 0.2,  0.7,  0.6,  0.2,  0.2,  0.8],
-    "статистика":        [ 0.4,  0.7,  0.3,  0.4,  0.3,  0.7],
-    "линейная алгебра":  [ 0.5,  0.8,  0.1,  0.2,  0.5,  0.9],
-    "теорвер":           [ 0.3,  0.8,  0.2,  0.3,  0.3,  0.3],
-    "оптимизация":       [ 0.7,  0.7,  0.6,  0.3,  0.5,  0.6],
-    "градиент":          [ 0.6,  0.7,  0.7,  0.2,  0.4,  0.8],
-    "матрица":           [ 0.5,  0.8,  0.1,  0.3,  0.6,  0.9],
+    "математика":        _v32(comp=0.3, theory=0.9, discrete=0.4, determin=0.9,
+                              algebra=0.7, calculus=0.5, geometry=0.4, statistics=0.3, topology=0.3),
+    "физика":            _v32(comp=0.2, theory=0.8, dynamic=0.4, system=0.3, determin=0.7,
+                              calculus=0.5, algebra=0.3),
+    "термодинамика":     _v32(comp=0.1, theory=0.7, dynamic=0.8, system=0.4, determin=0.5,
+                              calculus=0.4, flow=0.5, metabolism=0.3),
+    "механика":          _v32(comp=0.2, theory=0.7, dynamic=0.6, determin=0.8,
+                              calculus=0.5, geometry=0.3),
+    "статистика":        _v32(comp=0.4, theory=0.7, system=0.4, discrete=0.3, determin=0.6,
+                              statistics=0.9, algebra=0.3),
+    "линейная алгебра":  _v32(comp=0.5, theory=0.8, discrete=0.5, determin=0.9,
+                              algebra=0.95, geometry=0.4, embedding=0.4),
+    "теорвер":           _v32(comp=0.3, theory=0.8, dynamic=0.2, determin=0.3,
+                              statistics=0.8, calculus=0.4),
+    "оптимизация":       _v32(comp=0.7, theory=0.7, dynamic=0.6, discrete=0.5, determin=0.6,
+                              calculus=0.6, learning=0.4, algebra=0.4),
+    "градиент":          _v32(comp=0.6, theory=0.7, dynamic=0.7, discrete=0.4, determin=0.8,
+                              calculus=0.8, learning=0.6, algebra=0.4),
+    "матрица":           _v32(comp=0.5, theory=0.8, discrete=0.6, determin=0.9,
+                              algebra=0.9, embedding=0.3),
 
-    # ── Машинное обучение ────────────────────────────────────────────────────
-    "нейросеть":         [ 0.9,  0.5,  0.8,  0.7,  0.6,  0.3],
-    "трансформер":       [ 0.9,  0.6,  0.7,  0.8,  0.7,  0.3],
-    "внимание":          [ 0.8,  0.6,  0.8,  0.7,  0.6,  0.3],
-    "bert":              [ 0.9,  0.5,  0.6,  0.7,  0.7,  0.4],
-    "gpt":               [ 0.9,  0.5,  0.7,  0.7,  0.7,  0.3],
-    "llm":               [ 0.9,  0.5,  0.7,  0.8,  0.7,  0.2],
-    "эмбеддинг":         [ 0.8,  0.6,  0.2,  0.5,  0.7,  0.5],
-    "обратное распространение": [0.8, 0.6, 0.9, 0.3, 0.6, 0.7],
-    "функция потерь":    [ 0.7,  0.7,  0.5,  0.3,  0.5,  0.6],
-    "дообучение":        [ 0.8,  0.4,  0.8,  0.5,  0.6,  0.5],
-    "обучение":          [ 0.7,  0.5,  0.9,  0.5,  0.5,  0.4],
-    "классификация":     [ 0.8,  0.5,  0.5,  0.4,  0.7,  0.6],
-    "регрессия":         [ 0.7,  0.6,  0.4,  0.3,  0.5,  0.7],
-    "кластеризация":     [ 0.8,  0.5,  0.5,  0.7,  0.6,  0.5],
+    # ── Машинное обучение / AI ──────────────────────────────────────────────
+    "нейросеть":    _v32(comp=0.9, theory=0.5, dynamic=0.8, system=0.7, discrete=0.6,
+                         neural=0.95, learning=0.8, embedding=0.4, complexity=0.6),
+    "трансформер":  _v32(comp=0.9, theory=0.6, dynamic=0.7, system=0.8, discrete=0.7,
+                         neural=0.9, seq2seq=0.95, embedding=0.6, generation=0.7, complexity=0.7),
+    "внимание":     _v32(comp=0.8, theory=0.6, dynamic=0.8, system=0.7, discrete=0.6,
+                         neural=0.85, seq2seq=0.9, retrieval=0.5),
+    "bert":         _v32(comp=0.9, theory=0.5, dynamic=0.6, system=0.7, discrete=0.7,
+                         neural=0.9, seq2seq=0.8, embedding=0.8, determin=0.4),
+    "gpt":          _v32(comp=0.9, theory=0.5, dynamic=0.7, system=0.7, discrete=0.7,
+                         neural=0.9, seq2seq=0.85, generation=0.95, complexity=0.7),
+    "llm":          _v32(comp=0.9, theory=0.5, dynamic=0.7, system=0.8, discrete=0.7,
+                         neural=0.9, seq2seq=0.8, generation=0.9, embedding=0.5, complexity=0.8),
+    "эмбеддинг":    _v32(comp=0.8, theory=0.6, system=0.5, discrete=0.7,
+                         neural=0.6, embedding=0.95, retrieval=0.6, algebra=0.4, geometry=0.3),
+    "обратное распространение": _v32(comp=0.8, theory=0.6, dynamic=0.9, discrete=0.6,
+                         neural=0.8, learning=0.95, calculus=0.7, complexity=0.5),
+    "функция потерь": _v32(comp=0.7, theory=0.7, dynamic=0.5, discrete=0.5,
+                         neural=0.7, learning=0.8, calculus=0.6, statistics=0.4),
+    "дообучение":   _v32(comp=0.8, theory=0.4, dynamic=0.8, system=0.5, discrete=0.6,
+                         neural=0.8, learning=0.9, temporal=0.5),
+    "обучение":     _v32(comp=0.7, theory=0.5, dynamic=0.9, system=0.5, discrete=0.5,
+                         neural=0.7, learning=0.95, temporal=0.6),
+    "классификация": _v32(comp=0.8, theory=0.5, dynamic=0.5, discrete=0.7,
+                         neural=0.6, learning=0.7, statistics=0.5),
+    "регрессия":    _v32(comp=0.7, theory=0.6, dynamic=0.4, discrete=0.5,
+                         learning=0.7, statistics=0.6, calculus=0.4),
+    "кластеризация": _v32(comp=0.8, theory=0.5, dynamic=0.5, system=0.7, discrete=0.6,
+                         learning=0.6, graph_theory=0.4, statistics=0.4),
 
     # ── Алгоритмы / CS ──────────────────────────────────────────────────────
-    "алгоритм":          [ 0.8,  0.6,  0.7,  0.3,  0.8,  0.9],
-    "компилятор":        [ 0.9,  0.5,  0.7,  0.4,  0.9,  0.9],
-    "граф":              [ 0.7,  0.7,  0.3,  0.8,  0.7,  0.8],
-    "дерево":            [ 0.7,  0.6,  0.2,  0.7,  0.8,  0.9],
-    "хеш":               [ 0.9,  0.4,  0.2,  0.2,  0.9,  0.9],
-    "поиск":             [ 0.9,  0.5,  0.7,  0.4,  0.8,  0.8],
-    "сортировка":        [ 0.9,  0.5,  0.7,  0.2,  0.8,  0.9],
-    "индекс":            [ 0.8,  0.5,  0.2,  0.5,  0.8,  0.8],
-    "база данных":       [ 0.8,  0.4,  0.3,  0.6,  0.8,  0.8],
-    "векторная бд":      [ 0.9,  0.5,  0.4,  0.6,  0.8,  0.7],
-    "hnsw":              [ 0.9,  0.6,  0.5,  0.6,  0.8,  0.8],
-    "lsh":               [ 0.9,  0.6,  0.4,  0.5,  0.8,  0.6],
-    "косинусное расстояние": [0.8, 0.6, 0.2, 0.3, 0.7, 0.9],
+    "алгоритм":     _v32(comp=0.8, theory=0.6, dynamic=0.7, discrete=0.8, determin=0.9,
+                         complexity=0.7, topology=0.2),
+    "компилятор":   _v32(comp=0.9, theory=0.5, dynamic=0.7, discrete=0.9, determin=0.9,
+                         complexity=0.5),
+    "граф":         _v32(comp=0.7, theory=0.7, system=0.8, discrete=0.7, determin=0.8,
+                         graph_theory=0.95, topology=0.5),
+    "дерево":       _v32(comp=0.7, theory=0.6, system=0.7, discrete=0.8, determin=0.9,
+                         graph_theory=0.85, algebra=0.2),
+    "хеш":          _v32(comp=0.9, theory=0.4, discrete=0.9, determin=0.9,
+                         retrieval=0.5),
+    "поиск":        _v32(comp=0.9, theory=0.5, dynamic=0.7, discrete=0.8, determin=0.8,
+                         retrieval=0.9, complexity=0.5),
+    "сортировка":   _v32(comp=0.9, theory=0.5, dynamic=0.7, discrete=0.8, determin=0.9,
+                         complexity=0.5),
+    "индекс":       _v32(comp=0.8, theory=0.5, system=0.5, discrete=0.8, determin=0.8,
+                         retrieval=0.7),
+    "база данных":  _v32(comp=0.8, theory=0.4, dynamic=0.3, system=0.6, discrete=0.8,
+                         retrieval=0.7, distributed=0.4),
+    "векторная бд": _v32(comp=0.9, theory=0.5, system=0.6, discrete=0.8, determin=0.7,
+                         embedding=0.8, retrieval=0.9),
+    "hnsw":         _v32(comp=0.9, theory=0.6, system=0.6, discrete=0.8, determin=0.8,
+                         retrieval=0.95, graph_theory=0.6, embedding=0.5, complexity=0.6),
+    "lsh":          _v32(comp=0.9, theory=0.6, system=0.5, discrete=0.8, determin=0.6,
+                         retrieval=0.9, statistics=0.4, embedding=0.5),
+    "косинусное расстояние": _v32(comp=0.8, theory=0.6, discrete=0.7, determin=0.9,
+                         embedding=0.7, geometry=0.6, algebra=0.4),
 
     # ── Граф знаний / RAG ───────────────────────────────────────────────────
-    "граф знаний":       [ 0.8,  0.6,  0.3,  0.9,  0.7,  0.7],
-    "rag":               [ 0.9,  0.5,  0.7,  0.7,  0.7,  0.5],
-    "graphrag":          [ 0.9,  0.6,  0.6,  0.9,  0.7,  0.5],
-    "сообщество":        [ 0.6,  0.4,  0.3,  0.9,  0.5,  0.5],
-    "кластер":           [ 0.7,  0.5,  0.3,  0.8,  0.6,  0.6],
-    "модульность":       [ 0.7,  0.7,  0.2,  0.8,  0.6,  0.7],
-    "семантический поиск": [0.9, 0.5,  0.5,  0.6,  0.7,  0.6],
+    "граф знаний":  _v32(comp=0.8, theory=0.6, system=0.9, discrete=0.7, determin=0.7,
+                         retrieval=0.7, graph_theory=0.8, embedding=0.4),
+    "rag":          _v32(comp=0.9, theory=0.5, dynamic=0.7, system=0.7, discrete=0.7,
+                         retrieval=0.9, generation=0.7, embedding=0.6),
+    "graphrag":     _v32(comp=0.9, theory=0.6, dynamic=0.6, system=0.9, discrete=0.7,
+                         retrieval=0.9, graph_theory=0.8, generation=0.6, embedding=0.5),
+    "сообщество":   _v32(comp=0.6, theory=0.4, system=0.9, discrete=0.5,
+                         graph_theory=0.7, topology=0.4),
+    "кластер":      _v32(comp=0.7, theory=0.5, system=0.8, discrete=0.6,
+                         graph_theory=0.6, statistics=0.4),
+    "модульность":  _v32(comp=0.7, theory=0.7, system=0.8, discrete=0.6, determin=0.7,
+                         graph_theory=0.8, statistics=0.5),
+    "семантический поиск": _v32(comp=0.9, theory=0.5, dynamic=0.5, system=0.6, discrete=0.7,
+                         retrieval=0.95, embedding=0.8, neural=0.5),
 
     # ── Биология / Экология ─────────────────────────────────────────────────
-    "клетка":            [-0.5,  0.5,  0.7,  0.6, -0.3,  0.4],
-    "днк":               [-0.3,  0.7,  0.4,  0.5, -0.2,  0.8],
-    "ген":               [-0.2,  0.7,  0.5,  0.4, -0.1,  0.7],
-    "белок":             [-0.4,  0.6,  0.6,  0.4, -0.3,  0.5],
-    "экосистема":        [-0.6,  0.4,  0.7,  0.9, -0.5,  0.2],
-    "эволюция":          [-0.5,  0.5,  0.9,  0.8, -0.4,  0.1],
-    "метаболизм":        [-0.5,  0.5,  0.8,  0.5, -0.4,  0.4],
-    "нейрон":            [-0.1,  0.6,  0.8,  0.5, -0.2,  0.3],
+    "клетка":       _v32(comp=-0.5, theory=0.5, dynamic=0.7, system=0.6,
+                         cell=0.95, metabolism=0.6, evolution=0.3),
+    "днк":          _v32(comp=-0.3, theory=0.7, dynamic=0.4, system=0.5, determin=0.7,
+                         dna=0.95, cell=0.5, evolution=0.5),
+    "ген":          _v32(comp=-0.2, theory=0.7, dynamic=0.5, system=0.4, determin=0.6,
+                         dna=0.85, cell=0.4, evolution=0.6),
+    "белок":        _v32(comp=-0.4, theory=0.6, dynamic=0.6, system=0.4,
+                         cell=0.7, metabolism=0.7, dna=0.4),
+    "экосистема":   _v32(comp=-0.6, theory=0.4, dynamic=0.7, system=0.95,
+                         ecosystem=0.95, evolution=0.6, flow=0.4),
+    "эволюция":     _v32(comp=-0.5, theory=0.5, dynamic=0.9, system=0.8, determin=0.1,
+                         evolution=0.95, ecosystem=0.5, temporal=0.8),
+    "метаболизм":   _v32(comp=-0.5, theory=0.5, dynamic=0.8, system=0.5,
+                         cell=0.6, metabolism=0.95, flow=0.5),
+    "нейрон":       _v32(comp=-0.1, theory=0.6, dynamic=0.8, system=0.5,
+                         neurobio=0.95, cell=0.5, neural=0.4),
 
     # ── Транспорт / Инфраструктура ──────────────────────────────────────────
-    "транспорт":         [ 0.3,  0.1,  0.8,  0.8,  0.3,  0.6],
-    "метро":             [ 0.4,  0.1,  0.7,  0.8,  0.4,  0.7],
-    "инфраструктура":    [ 0.4,  0.2,  0.3,  0.9,  0.4,  0.6],
-    "сеть":              [ 0.6,  0.3,  0.5,  0.9,  0.5,  0.5],
-    "маршрут":           [ 0.4,  0.2,  0.7,  0.6,  0.4,  0.7],
+    "транспорт":    _v32(comp=0.3, theory=0.1, dynamic=0.8, system=0.8, determin=0.6,
+                         transport=0.95, network=0.6, routing=0.7, flow=0.6),
+    "метро":        _v32(comp=0.4, theory=0.1, dynamic=0.7, system=0.8, discrete=0.4, determin=0.7,
+                         transport=0.9, network=0.7, routing=0.6, physical=0.7),
+    "инфраструктура": _v32(comp=0.4, theory=0.2, system=0.9, discrete=0.4, determin=0.6,
+                         network=0.8, distributed=0.6, physical=0.7),
+    "сеть":         _v32(comp=0.6, theory=0.3, dynamic=0.5, system=0.9, discrete=0.5,
+                         network=0.95, distributed=0.7, graph_theory=0.5),
+    "маршрут":      _v32(comp=0.4, theory=0.2, dynamic=0.7, system=0.6, determin=0.7,
+                         routing=0.9, transport=0.6, graph_theory=0.4),
 
     # ── Общие / Нейтральные ─────────────────────────────────────────────────
-    "данные":            [ 0.6,  0.4,  0.3,  0.5,  0.7,  0.6],
-    "модель":            [ 0.7,  0.6,  0.4,  0.5,  0.6,  0.5],
-    "система":           [ 0.5,  0.4,  0.5,  0.8,  0.5,  0.6],
-    "архитектура":       [ 0.7,  0.5,  0.2,  0.7,  0.6,  0.7],
-    "структура":         [ 0.5,  0.6,  0.1,  0.6,  0.6,  0.8],
-    "процесс":           [ 0.4,  0.3,  0.9,  0.5,  0.4,  0.5],
-    "информация":        [ 0.5,  0.5,  0.4,  0.6,  0.6,  0.5],
-    "знание":            [ 0.4,  0.8,  0.2,  0.7,  0.4,  0.6],
-    "язык":              [ 0.3,  0.7,  0.5,  0.7,  0.4,  0.4],
-    "текст":             [ 0.4,  0.5,  0.3,  0.5,  0.5,  0.5],
-    "контекст":          [ 0.5,  0.5,  0.4,  0.6,  0.5,  0.4],
-    "токен":             [ 0.8,  0.4,  0.2,  0.3,  0.9,  0.8],
-    "вектор":            [ 0.7,  0.7,  0.1,  0.3,  0.7,  0.9],
-    "пространство":      [ 0.4,  0.8,  0.2,  0.5,  0.4,  0.7],
+    "данные":       _v32(comp=0.6, theory=0.4, system=0.5, discrete=0.7, determin=0.6,
+                         retrieval=0.4, statistics=0.3),
+    "модель":       _v32(comp=0.7, theory=0.6, dynamic=0.4, system=0.5, discrete=0.6,
+                         neural=0.3, statistics=0.3, algebra=0.3),
+    "система":      _v32(comp=0.5, theory=0.4, dynamic=0.5, system=0.8, discrete=0.5,
+                         distributed=0.4, complexity=0.4),
+    "архитектура":  _v32(comp=0.7, theory=0.5, system=0.7, discrete=0.6, determin=0.7,
+                         complexity=0.4),
+    "структура":    _v32(comp=0.5, theory=0.6, system=0.6, discrete=0.6, determin=0.8,
+                         graph_theory=0.3, algebra=0.3),
+    "процесс":      _v32(comp=0.4, theory=0.3, dynamic=0.9, system=0.5, discrete=0.4,
+                         flow=0.5, temporal=0.6),
+    "информация":   _v32(comp=0.5, theory=0.5, dynamic=0.4, system=0.6, discrete=0.6,
+                         retrieval=0.4, statistics=0.3),
+    "знание":       _v32(comp=0.4, theory=0.8, system=0.7, discrete=0.4,
+                         retrieval=0.4, graph_theory=0.3),
+    "язык":         _v32(comp=0.3, theory=0.7, dynamic=0.5, system=0.7,
+                         seq2seq=0.5, generation=0.4, embedding=0.3),
+    "текст":        _v32(comp=0.4, theory=0.5, system=0.5, discrete=0.5,
+                         seq2seq=0.4, embedding=0.4, retrieval=0.3),
+    "контекст":     _v32(comp=0.5, theory=0.5, dynamic=0.4, system=0.6,
+                         seq2seq=0.5, retrieval=0.4),
+    "токен":        _v32(comp=0.8, theory=0.4, discrete=0.9, determin=0.8,
+                         seq2seq=0.7, embedding=0.5),
+    "вектор":       _v32(comp=0.7, theory=0.7, discrete=0.7, determin=0.9,
+                         embedding=0.7, algebra=0.6, geometry=0.4),
+    "пространство": _v32(comp=0.4, theory=0.8, system=0.5, discrete=0.4, determin=0.7,
+                         geometry=0.7, topology=0.6, algebra=0.4),
 }
 
 
@@ -145,7 +238,7 @@ _VOCAB_NORM: dict[str, list[float]] = {
 
 def _text_to_embedding(text: str) -> list[float]:
     """
-    Преобразует текст в 6D семантический вектор.
+    Преобразует текст в 32D семантический вектор.
 
     Алгоритм:
     1. Токенизируем текст (нижний регистр, разбиваем по пробелам/знакам)
@@ -185,11 +278,12 @@ def _text_to_embedding(text: str) -> list[float]:
             result.append((h / 0x7FFFFFFF) - 1.0)
         return _normalize(result)
 
-    # Взвешенное среднее
+    # Взвешенное среднее — размерность берём из первого найденного вектора
     total_w = sum(weights)
-    avg = [0.0] * 6
+    ndim = len(matched[0])
+    avg = [0.0] * ndim
     for vec, w in zip(matched, weights):
-        for j in range(6):
+        for j in range(min(ndim, len(vec))):
             avg[j] += vec[j] * w / total_w
 
     return _normalize(avg)

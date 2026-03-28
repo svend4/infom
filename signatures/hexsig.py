@@ -170,13 +170,33 @@ def is_perfect_code(centers: list[int], radius: int) -> bool:
 
 def embed_to_q6(embedding: list[float]) -> int:
     """
-    Проецирует непрерывный embedding в Q6 через бинаризацию по среднему.
-    Берёт первые 6 компонент; бит=1 если значение ВЫШЕ среднего по вектору.
-    Это гарантирует что ~половина битов будет 1, даже если все значения >= 0.
+    Проецирует непрерывный embedding любой размерности в Q6 (6 бит, 64 ячейки).
+
+    Алгоритм проекции N→6:
+      N <= 6  : padding нулями до 6D (как раньше)
+      N > 6   : average-pool — делим вектор на 6 равных чанков, берём среднее каждого.
+                Это сохраняет информацию со всей размерности, а не только первых 6 элементов.
+                Для N=32: чанки по ~5 элементов → лучшее разрешение, меньше коллизий.
+                Для N=768 (bge-m3): чанки по ~128 элементов → полное использование.
+
+    Бинаризация: бит=1 если значение ВЫШЕ среднего по 6D-проекции.
     """
-    vals = [embedding[i] if i < len(embedding) else 0.0 for i in range(N_DIMS)]
+    n = len(embedding)
+    if n <= N_DIMS:
+        vals = [embedding[i] if i < n else 0.0 for i in range(N_DIMS)]
+    else:
+        # Average-pool: N dims → 6 dims
+        chunk = n / N_DIMS
+        vals = []
+        for d in range(N_DIMS):
+            start = int(d * chunk)
+            end   = int((d + 1) * chunk)
+            if end <= start:
+                end = start + 1
+            chunk_vals = embedding[start:end]
+            vals.append(sum(chunk_vals) / len(chunk_vals))
+
     mean = sum(vals) / N_DIMS
-    # если вектор константный — используем sign(val - 0.5) как запасной вариант
     if all(abs(v - mean) < 1e-10 for v in vals):
         bits = [1 if v > 0.5 else 0 for v in vals]
     else:
