@@ -197,11 +197,22 @@ def demo_rag():
         pipeline.add_edge(src, tgt, lbl, w)
     pipeline.build()
 
+    # Multi-Projection LSH демо
+    from search.multi_lsh import MultiProjectionQ6
+    print("\n" + "="*60)
+    print("Multi-Projection Q6 LSH (3 проекции)")
+    print("="*60)
+    mlsh = MultiProjectionQ6(n_projections=3)
+    query_emb = [0.85, 0.75, 0.65, -0.45, -0.55, 0.75]
+    print(mlsh.info())
+    print(f"hash_all: {mlsh.hash_all(query_emb)}")
+    union = mlsh.union_hamming_ball(query_emb, radius=1)
+    print(f"union Hamming ball r=1: {len(union)}/64 позиций")
+
     # HNSW поиск
     print("\n" + "="*60)
-    print("HNSW поиск (запрос близко к 'Алгоритм')")
+    print("HNSW поиск с Multi-Proj (запрос близко к 'Алгоритм')")
     print("="*60)
-    query_emb = [0.85, 0.75, 0.65, -0.45, -0.55, 0.75]
     result = pipeline.search_hnsw(query_emb, radius=2)
     print(result.summary())
 

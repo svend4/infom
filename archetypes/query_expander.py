@@ -198,6 +198,19 @@ class QueryExpander:
         entities = [w for w in words[1:] if w and w[0].isupper()]
         return entities if entities else words[:2]
 
+    # вопросительные слова которые нужно убрать для извлечения темы
+    _QUESTION_WORDS = {
+        "что", "как", "где", "когда", "зачем", "почему", "кто", "какой",
+        "какая", "какие", "каково", "чем", "чего", "такое", "является",
+        "what", "how", "where", "when", "why", "who", "which", "is", "are",
+    }
+
+    def _extract_topic(self, query: str) -> str:
+        """Извлечь ключевую тему из вопроса (убираем вопросительные слова)."""
+        words = query.rstrip("?!.").split()
+        content = [w for w in words if w.lower() not in self._QUESTION_WORDS]
+        return " ".join(content) if content else query
+
     def _classify_domain(self, query: str) -> str:
         q = query.lower()
         best_domain, best_score = "general", 0
@@ -235,7 +248,8 @@ class QueryExpander:
         """
         topic_info  = self.parse_topic(query)
         relevance   = self.calculate_archetype_relevance(topic_info)
-        topic       = query
+        # извлекаем краткую тему (последнее существительное или всё после вопросительного слова)
+        topic = self._extract_topic(query)
 
         tree     = QuestionTree(topic=topic)
         q_idx    = 0

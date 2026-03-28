@@ -23,6 +23,7 @@ import math
 
 from graph import KnowledgeMap, Community, GraphNode, HyperEdge
 from signatures import hamming_ball, hamming, ifs_distance
+from search.multi_lsh import MultiProjectionQ6
 
 
 # ── результаты ──────────────────────────────────────────────────────────────
@@ -51,9 +52,9 @@ class HNSWResult:
     def summary(self) -> str:
         lines = [
             f"HNSW поиск: hex_id={self.query_hex}",
-            f"  Этап 1 (Hamming ball): {self.n_stage1} кандидатов",
-            f"  Этап 2 (rerank):       {self.n_stage2} финальных",
-            f"  Всего проверено:       {self.total_checked}",
+            f"  Этап 1 (Multi-Proj Q6): {self.n_stage1} кандидатов",
+            f"  Этап 2 (rerank):        {self.n_stage2} финальных",
+            f"  Всего проверено:        {self.total_checked}",
             "",
             "Топ результаты:",
         ]
@@ -81,32 +82,59 @@ class HNSWSearch:
         km:             KnowledgeMap,
         stage1_radius:  int = 2,
         stage2_top_k:   int = 10,
+        n_projections:  int = 3,
     ):
         self.km            = km
         self.stage1_radius = stage1_radius
         self.stage2_top_k  = stage2_top_k
+        self.multi_lsh     = MultiProjectionQ6(n_projections=n_projections)
 
     # ── Этап 1: быстрый отбор через Q6 Hamming ball ──────────────────────────
 
-    def _stage1_communities(self, query_hex: int) -> list[Community]:
-        """Быстро найти кандидатов-сообществ в Q6-радиусе."""
-        ball = set(hamming_ball(query_hex, self.stage1_radius))
-        candidates = []
-        for comm in self.km.communities.values():
-            if comm.hex_id in ball:
-                candidates.append(comm)
-            # также добавляем соседей по Делоне (смежные сообщества)
-            elif any(
-                nb_id in {c.id for c in candidates}
-                for nb_id in comm.neighbors
-            ):
-                candidates.append(comm)
-        return candidates
+    def _stage1_communities(
+        self, query_emb: list[float]
+    ) -> tuple[list[Community], dict[str, float]]:
+        """
+        Быстро найти кандидатов-сообществ через union Hamming ball
+        от k независимых Q6 проекций (Multi-Projection LSH).
 
-    def _stage1_nodes(self, query_hex: int) -> list[GraphNode]:
-        """Быстро найти ноды-кандидаты через Q6."""
-        ball = set(hamming_ball(query_hex, self.stage1_radius))
-        return [n for n in self.km.nodes.values() if n.hex_id in ball]
+        Возвращает (candidates, coverage) где coverage[comm_id] ∈ [0,1] —
+        доля проекций, подтверждающих близость (score boost в этапе 2).
+        """
+        union_ball = self.multi_lsh.union_hamming_ball(
+            query_emb, self.stage1_radius
+        )
+        candidates  = []
+        coverage    = {}
+        already_ids: set[str] = set()
+
+        for comm in self.km.communities.values():
+            if comm.hex_id in union_ball:
+                cov = self.multi_lsh.coverage_score(
+                    query_emb, comm.hex_id, self.stage1_radius
+                )
+                candidates.append(comm)
+                coverage[comm.id] = cov
+                already_ids.add(comm.id)
+
+        # Делоне-соседи уже найденных сообществ (граничные кандидаты)
+        for comm in list(candidates):
+            for nb_id in comm.neighbors:
+                if nb_id not in already_ids:
+                    nb = self.km.communities.get(nb_id)
+                    if nb:
+                        candidates.append(nb)
+                        coverage[nb.id] = 0.1  # слабый coverage
+                        already_ids.add(nb_id)
+
+        return candidates, coverage
+
+    def _stage1_nodes(self, query_emb: list[float]) -> list[GraphNode]:
+        """Быстро найти ноды-кандидаты через multi-projection union."""
+        union_ball = self.multi_lsh.union_hamming_ball(
+            query_emb, self.stage1_radius
+        )
+        return [n for n in self.km.nodes.values() if n.hex_id in union_ball]
 
     # ── Этап 2: точный reranking по геометрической сигнатуре ─────────────────
 
@@ -181,20 +209,21 @@ class HNSWSearch:
 
         all_candidates: list[HNSWCandidate] = []
 
-        # ── Этап 1: Q6 Hamming ball ───────────────────────────────────────────
-        stage1_comms = self._stage1_communities(query_hex)
-        stage1_nodes = self._stage1_nodes(query_hex) if include_nodes else []
+        # ── Этап 1: Multi-Projection Q6 union ────────────────────────────────
+        stage1_comms, coverage = self._stage1_communities(query_embedding)
+        stage1_nodes = self._stage1_nodes(query_embedding) if include_nodes else []
         total_checked = len(self.km.communities) + len(self.km.nodes)
 
-        # query_vec для geometric scoring = signature вектор из эмбеддинга
-        # используем embedding как proxy (первые 6 компонент)
+        # query_vec для geometric scoring
         query_vec = query_embedding[:6]
 
         for comm in stage1_comms:
-            hd    = hamming(query_hex, comm.hex_id)
+            hd    = self.multi_lsh.min_distance(query_embedding, [0.0] * 6)
+            hd    = hamming(query_hex, comm.hex_id)   # single-proj distance
             score = self._score_community(comm, query_vec)
-            # Q6-бонус: чем ближе, тем больше
-            q6_bonus = 1.0 - hd / 7.0
+            # Q6-бонус: coverage = доля проекций подтверждающих близость
+            cov      = coverage.get(comm.id, 0.0)
+            q6_bonus = (1.0 - hd / 7.0) * 0.7 + cov * 0.3
             score    = 0.6 * score + 0.4 * q6_bonus
             all_candidates.append(HNSWCandidate(
                 item_id   = comm.id,
@@ -206,7 +235,7 @@ class HNSWSearch:
 
         for node in stage1_nodes:
             score = self._score_node(node, query_embedding)
-            hd    = hamming(query_hex, node.hex_id)
+            hd    = self.multi_lsh.min_distance(query_embedding, node.embedding)
             all_candidates.append(HNSWCandidate(
                 item_id   = node.id,
                 item_type = "node",

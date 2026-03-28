@@ -36,6 +36,9 @@ LOCAL_PROMPT = """Ты — эксперт по анализу знаний. От
   Скелет: {skeleton}
   Доминирующее измерение: {dominant_dim}
 
+Уточняющие вопросы для глубокого ответа:
+{expansion_questions}
+
 Дай краткий, точный ответ основываясь только на контексте."""
 
 GLOBAL_PROMPT = """Ты — аналитик. Синтезируй ответ на вопрос по ВСЕМ сообществам графа знаний.
@@ -50,7 +53,8 @@ GLOBAL_PROMPT = """Ты — аналитик. Синтезируй ответ н
 CONTEXT_TEMPLATE = """Сущности: {entities}
 Связи: {relations}
 Архетипы: {archetypes}
-Q6-позиция: {hex_id} [{bits}]"""
+Q6-позиция: {hex_id} [{bits}]
+Форма кластера: {shape} / Скелет: {skeleton}"""
 
 
 # ── структуры ────────────────────────────────────────────────────────────────
@@ -76,6 +80,12 @@ class GraphRAGAnswer:
             f"Источники: {', '.join(self.sources[:5])}",
             f"Токены: {self.tokens_used}",
         ]
+        if self.questions:
+            hi_pri = self.questions.by_priority(min_p=4)[:3]
+            if hi_pri:
+                lines.append(f"\nКлючевые вопросы [QueryExpander]:")
+                for q in hi_pri:
+                    lines.append(f"  [{q.archetype}] {q.text}")
         if self.hnsw_result:
             lines.append(f"\n{self.hnsw_result.summary()}")
         return "\n".join(lines)
@@ -142,14 +152,22 @@ class GraphRAGQuery:
             hex_id     = top_comms[0].hex_id if top_comms else "?",
             bits       = "".join(str(b) for b in top_comms[0].hex_sig.bits)
                          if top_comms and top_comms[0].hex_sig else "??????",
+            shape      = shape,
+            skeleton   = skeleton,
         )
 
+        # QueryExpander: выбираем высокоприоритетные вопросы для усиления контекста
+        qtree = self.expander.expand_query(query)
+        hi_q  = qtree.by_priority(min_p=4)[:5]
+        expansion_str = "\n".join(f"  - {q.text}" for q in hi_q) or "  (нет)"
+
         prompt = LOCAL_PROMPT.format(
-            query        = query,
-            context      = context,
-            shape        = shape,
-            skeleton     = skeleton,
-            dominant_dim = dom_dim,
+            query               = query,
+            context             = context,
+            shape               = shape,
+            skeleton            = skeleton,
+            dominant_dim        = dom_dim,
+            expansion_questions = expansion_str,
         )
 
         resp    = self.llm.complete(prompt)
@@ -161,7 +179,7 @@ class GraphRAGQuery:
             answer      = resp.text,
             context     = context,
             hnsw_result = hnsw_result,
-            questions   = self.expander.expand_query(query),
+            questions   = qtree,
             sources     = sources,
             tokens_used = resp.tokens,
         )
