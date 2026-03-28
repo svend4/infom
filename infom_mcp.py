@@ -34,11 +34,93 @@ import sys
 import json
 import os
 import traceback
+from datetime import datetime
 
 # Добавляем корень проекта в sys.path
 _DIR = os.path.dirname(os.path.abspath(__file__))
 if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
+
+# ── Персистентность графа ─────────────────────────────────────────────────────
+
+_SNAPSHOTS_DIR = os.path.join(_DIR, "graph_snapshots")
+_SNAPSHOT_PATH = os.path.join(_SNAPSHOTS_DIR, "latest.json")
+
+
+def _save_snapshot() -> None:
+    """Сохраняет текущий граф в graph_snapshots/latest.json."""
+    km = _state.get("km")
+    if km is None or not km.nodes:
+        return
+    os.makedirs(_SNAPSHOTS_DIR, exist_ok=True)
+    data = {
+        "saved_at": datetime.now().isoformat(),
+        "nodes": [
+            {
+                "id": n.id,
+                "label": n.label,
+                "archetype": n.archetype,
+                "weight": n.weight,
+                "embedding": list(n.embedding),
+                "metadata": n.metadata,
+            }
+            for n in km.nodes.values()
+        ],
+        "edges": [
+            {
+                "source": e.source,
+                "target": e.target,
+                "label": e.label,
+                "weight": e.weight,
+                "directed": e.directed,
+            }
+            for e in km.edges
+        ],
+    }
+    with open(_SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(f"[infom] snapshot saved → {_SNAPSHOT_PATH}", file=sys.stderr)
+
+
+def _load_snapshot() -> bool:
+    """Загружает граф из graph_snapshots/latest.json. Возвращает True при успехе."""
+    if not os.path.exists(_SNAPSHOT_PATH):
+        return False
+    try:
+        with open(_SNAPSHOT_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        from graph import KnowledgeMap, GraphNode, GraphEdge
+        km = KnowledgeMap()
+        llm = _get_llm()
+        for nd in data.get("nodes", []):
+            emb = nd.get("embedding") or llm.embed(nd["label"])
+            node = GraphNode(
+                id=nd["id"],
+                label=nd["label"],
+                archetype=nd.get("archetype", ""),
+                weight=nd.get("weight", 1.0),
+                embedding=emb,
+                metadata=nd.get("metadata", {}),
+            )
+            km.add_node(node)
+        for ed in data.get("edges", []):
+            edge = GraphEdge(
+                source=ed["source"],
+                target=ed["target"],
+                label=ed.get("label", "связан"),
+                weight=ed.get("weight", 0.7),
+                directed=ed.get("directed", True),
+            )
+            km.add_edge(edge)
+        km.build()
+        _state["km"] = km
+        _state["rag"] = None
+        saved_at = data.get("saved_at", "?")
+        print(f"[infom] snapshot loaded ({len(km.nodes)} nodes, saved {saved_at})", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[infom] snapshot load failed: {e}", file=sys.stderr)
+        return False
 
 
 # ── Глобальное состояние ─────────────────────────────────────────────────────
@@ -51,8 +133,8 @@ _state: dict = {
 
 def _get_llm():
     if _state["llm"] is None:
-        from semantic_sim import SemanticAdapter
-        _state["llm"] = SemanticAdapter()
+        from config import create_llm_adapter
+        _state["llm"] = create_llm_adapter()
     return _state["llm"]
 
 def _get_km():
@@ -257,6 +339,30 @@ TOOLS = [
             }
         }
     },
+    {
+        "name": "infom_save",
+        "description": (
+            "Сохраняет текущий граф знаний в graph_snapshots/latest.json. "
+            "Снапшот автоматически загружается при следующем запуске сервера. "
+            "Используй после важных изменений или в конце рабочей сессии."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "infom_load",
+        "description": (
+            "Загружает граф из последнего снапшота (graph_snapshots/latest.json). "
+            "Позволяет восстановить граф после перезапуска сервера. "
+            "Возвращает статистику восстановленного графа."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
 ]
 
 
@@ -278,6 +384,7 @@ def tool_index(args: dict) -> str:
     km, result = indexer.index(text)
     _state["km"]  = km
     _state["rag"] = None  # сбросим RAG — пересоздастся с новым km
+    _save_snapshot()
 
     lines = [
         f"Граф успешно проиндексирован.",
@@ -445,6 +552,7 @@ def tool_build(args: dict) -> str:
         return "Граф пуст — нечего строить."
     km.build()
     _state["rag"] = None
+    _save_snapshot()
     return (
         f"Граф перестроен: {len(km.nodes)} нод, {len(km.edges)} рёбер, "
         f"{len(km.communities)} сообществ, Q={km.modularity:.3f}, "
@@ -456,6 +564,30 @@ def tool_reset(args: dict) -> str:
     _state["km"]  = None
     _state["rag"] = None
     return "Граф сброшен."
+
+
+def tool_save(args: dict) -> str:
+    km = _state.get("km")
+    if km is None or not km.nodes:
+        return "Граф пуст — нечего сохранять."
+    _save_snapshot()
+    return (
+        f"Граф сохранён → {_SNAPSHOT_PATH}\n"
+        f"Нод: {len(km.nodes)}, Рёбер: {len(km.edges)}, "
+        f"Сообществ: {len(km.communities)}, Q={km.modularity:.3f}"
+    )
+
+
+def tool_load(args: dict) -> str:
+    ok = _load_snapshot()
+    if not ok:
+        return f"Снапшот не найден: {_SNAPSHOT_PATH}\nСначала вызовите infom_index() или infom_save()."
+    km = _state["km"]
+    return (
+        f"Граф восстановлен из снапшота.\n"
+        f"Нод: {len(km.nodes)}, Рёбер: {len(km.edges)}, "
+        f"Сообществ: {len(km.communities)}, Q={km.modularity:.3f}"
+    )
 
 
 def tool_benchmark(args: dict) -> str:
@@ -478,6 +610,8 @@ _TOOL_HANDLERS = {
     "infom_build":     tool_build,
     "infom_reset":     tool_reset,
     "infom_benchmark": tool_benchmark,
+    "infom_save":      tool_save,
+    "infom_load":      tool_load,
 }
 
 
@@ -555,6 +689,8 @@ def handle_message(msg: dict) -> dict | None:
 def main():
     # Все диагностические сообщения — в stderr, не в stdout
     print("InfoM MCP Server запущен. Ожидание сообщений...", file=sys.stderr, flush=True)
+    # Автозагрузка снапшота при старте
+    _load_snapshot()
 
     for raw_line in sys.stdin:
         raw_line = raw_line.strip()
